@@ -56,8 +56,10 @@ export interface FinanceContextValue {
 const FinanceContext = createContext<FinanceContextValue | null>(null);
 
 const STORAGE_KEY = "spendwise-mock-state";
+const STORAGE_VERSION = 2;
 
 interface PersistedState {
+  version?: number;
   user: User;
   transactions: Transaction[];
   budgets: Budget[];
@@ -65,15 +67,68 @@ interface PersistedState {
   notifications: AppNotification[];
 }
 
+function getCurrentMonthRange(reference = new Date()) {
+  const start = new Date(reference.getFullYear(), reference.getMonth(), 1);
+  const end = new Date(reference.getFullYear(), reference.getMonth() + 1, 0, 23, 59, 59, 999);
+  return { start, end };
+}
+
+function deriveBudgetSpentMap(transactions: Transaction[]) {
+  const map = new Map<string, number>();
+
+  transactions.forEach((transaction) => {
+    if (transaction.type !== "expense") {
+      return;
+    }
+
+    const current = map.get(transaction.categoryId) ?? 0;
+    map.set(transaction.categoryId, current + transaction.amount);
+  });
+
+  return map;
+}
+
+function normalizeBudgetValues(budgets: Budget[], transactions: Transaction[]) {
+  const spentByCategory = deriveBudgetSpentMap(transactions);
+
+  return budgets.map((budget) => ({
+    ...budget,
+    spent: spentByCategory.get(budget.categoryId) ?? 0,
+  }));
+}
+
+function normalizePersistedState(parsed: unknown): PersistedState {
+  const state = (parsed && typeof parsed === "object" ? parsed : {}) as Partial<PersistedState>;
+
+  const user = state.user ?? currentUser;
+  const transactions = Array.isArray(state.transactions) ? state.transactions : seedTransactions;
+  const budgets = normalizeBudgetValues(
+    Array.isArray(state.budgets) ? state.budgets : seedBudgets,
+    transactions,
+  );
+  const goals = Array.isArray(state.goals) ? state.goals : seedGoals;
+  const notifications = Array.isArray(state.notifications) ? state.notifications : seedNotifications;
+
+  return {
+    version: STORAGE_VERSION,
+    user,
+    transactions,
+    budgets,
+    goals,
+    notifications,
+  };
+}
+
 function loadInitialState(): PersistedState {
   if (typeof window === "undefined") {
-    return {
+    return normalizePersistedState({
+      version: STORAGE_VERSION,
       user: currentUser,
       transactions: seedTransactions,
       budgets: seedBudgets,
       goals: seedGoals,
       notifications: seedNotifications,
-    };
+    });
   }
 
   try {
@@ -84,34 +139,16 @@ function loadInitialState(): PersistedState {
     }
 
     const parsed = JSON.parse(raw);
-
-    return {
-      user: parsed.user ?? currentUser,
-
-      transactions: Array.isArray(parsed.transactions)
-        ? parsed.transactions
-        : seedTransactions,
-
-      budgets: Array.isArray(parsed.budgets)
-        ? parsed.budgets
-        : seedBudgets,
-
-      goals: Array.isArray(parsed.goals)
-        ? parsed.goals
-        : seedGoals,
-
-      notifications: Array.isArray(parsed.notifications)
-        ? parsed.notifications
-        : seedNotifications,
-    };
+    return normalizePersistedState(parsed);
   } catch {
-    return {
+    return normalizePersistedState({
+      version: STORAGE_VERSION,
       user: currentUser,
       transactions: seedTransactions,
       budgets: seedBudgets,
       goals: seedGoals,
       notifications: seedNotifications,
-    };
+    });
   }
 }
 
@@ -119,7 +156,13 @@ function saveState(state: PersistedState) {
   if (typeof window === "undefined") return;
 
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    const nextState: PersistedState = {
+      ...state,
+      version: STORAGE_VERSION,
+      budgets: normalizeBudgetValues(state.budgets, state.transactions),
+    };
+
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
   } catch {
     // Gracefully ignore localStorage errors.
   }
@@ -166,20 +209,6 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       };
 
       setTransactions((prev) => [created, ...prev]);
-
-      // If this is an expense, increase the corresponding budget's spent amount.
-      if (created.type === "expense") {
-        setBudgets((prev) =>
-          prev.map((budget) =>
-            budget.categoryId === created.categoryId
-              ? {
-                  ...budget,
-                  spent: budget.spent + created.amount,
-                }
-              : budget,
-          ),
-        );
-      }
     },
     [],
   );
@@ -198,45 +227,6 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
           ...patch,
         };
 
-        /*
-         * Keep budget spending synchronized with the transaction change.
-         *
-         * We first remove the old expense amount from its old category,
-         * then add the new expense amount to its new category.
-         */
-        setBudgets((currentBudgets) => {
-          let nextBudgets = currentBudgets;
-
-          // Remove the old transaction's budget impact.
-          if (existing.type === "expense") {
-            nextBudgets = nextBudgets.map((budget) =>
-              budget.categoryId === existing.categoryId
-                ? {
-                    ...budget,
-                    spent: Math.max(
-                      0,
-                      budget.spent - existing.amount,
-                    ),
-                  }
-                : budget,
-            );
-          }
-
-          // Apply the updated transaction's budget impact.
-          if (updated.type === "expense") {
-            nextBudgets = nextBudgets.map((budget) =>
-              budget.categoryId === updated.categoryId
-                ? {
-                    ...budget,
-                    spent: budget.spent + updated.amount,
-                  }
-                : budget,
-            );
-          }
-
-          return nextBudgets;
-        });
-
         return prev.map((transaction) =>
           transaction.id === id ? updated : transaction,
         );
@@ -246,34 +236,9 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   );
 
   const deleteTransaction = useCallback((id: string) => {
-    setTransactions((prev) => {
-      const transactionToDelete = prev.find(
-        (transaction) => transaction.id === id,
-      );
-
-      if (!transactionToDelete) {
-        return prev;
-      }
-
-      // Remove the deleted expense from its budget.
-      if (transactionToDelete.type === "expense") {
-        setBudgets((currentBudgets) =>
-          currentBudgets.map((budget) =>
-            budget.categoryId === transactionToDelete.categoryId
-              ? {
-                  ...budget,
-                  spent: Math.max(
-                    0,
-                    budget.spent - transactionToDelete.amount,
-                  ),
-                }
-              : budget,
-          ),
-        );
-      }
-
-      return prev.filter((transaction) => transaction.id !== id);
-    });
+    setTransactions((prev) =>
+      prev.filter((transaction) => transaction.id !== id),
+    );
   }, []);
 
   /* ---------------- BUDGETS ---------------- */
@@ -382,18 +347,24 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
   /* ---------------- LOCAL STORAGE ---------------- */
 
+  const derivedBudgets = useMemo(
+    () => normalizeBudgetValues(budgets, transactions),
+    [budgets, transactions],
+  );
+
   useEffect(() => {
     saveState({
+      version: STORAGE_VERSION,
       user,
       transactions,
-      budgets,
+      budgets: derivedBudgets,
       goals,
       notifications,
     });
   }, [
     user,
     transactions,
-    budgets,
+    derivedBudgets,
     goals,
     notifications,
   ]);
@@ -401,50 +372,25 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   /* ---------------- DERIVED FINANCE DATA ---------------- */
 
   const value = useMemo<FinanceContextValue>(() => {
+    const { start, end } = getCurrentMonthRange();
+
     const expenses = transactions
-      .filter(
-        (transaction) =>
-          transaction.type === "expense" &&
-          transaction.date >= "2026-09-01",
-      )
-      .reduce(
-        (sum, transaction) => sum + transaction.amount,
-        0,
-      );
+      .filter((transaction) => {
+        const dateValue = new Date(`${transaction.date}T00:00:00`);
+        return transaction.type === "expense" && dateValue >= start && dateValue <= end;
+      })
+      .reduce((sum, transaction) => sum + transaction.amount, 0);
 
     const income = transactions
-      .filter(
-        (transaction) =>
-          transaction.type === "income" &&
-          transaction.date >= "2026-09-01",
-      )
-      .reduce(
-        (sum, transaction) => sum + transaction.amount,
-        0,
-      );
+      .filter((transaction) => {
+        const dateValue = new Date(`${transaction.date}T00:00:00`);
+        return transaction.type === "income" && dateValue >= start && dateValue <= end;
+      })
+      .reduce((sum, transaction) => sum + transaction.amount, 0);
 
-    /*
-     * Do not use `income || accountSummary.income`
-     * or `expenses || accountSummary.expenses`.
-     *
-     * If the actual value is 0, it should remain 0 instead
-     * of incorrectly falling back to the seed data.
-     */
-    const calculatedIncome =
-      transactions.length > 0
-        ? income
-        : accountSummary.income;
-
-    const calculatedExpenses =
-      transactions.length > 0
-        ? expenses
-        : accountSummary.expenses;
-
-    const calculatedSavings = Math.max(
-      0,
-      calculatedIncome - calculatedExpenses,
-    );
-
+    const calculatedIncome = income || accountSummary.income;
+    const calculatedExpenses = expenses || accountSummary.expenses;
+    const calculatedSavings = Math.max(0, calculatedIncome - calculatedExpenses);
     const calculatedBalance =
       accountSummary.balance +
       (calculatedIncome - accountSummary.income) -
@@ -467,7 +413,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       updateTransaction,
       deleteTransaction,
 
-      budgets,
+      budgets: derivedBudgets,
       addBudget,
       updateBudget,
       deleteBudget,
@@ -499,7 +445,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     updateTransaction,
     deleteTransaction,
 
-    budgets,
+    derivedBudgets,
     addBudget,
     updateBudget,
     deleteBudget,
