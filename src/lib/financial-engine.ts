@@ -9,12 +9,12 @@ export interface CashFlowPoint {
   net: number;
 }
 
-function normalizeDate(value: string): string {
+export function normalizeDate(value: string): string {
   if (!value) return "";
   return value.slice(0, 10);
 }
 
-function formatDate(date: Date): string {
+export function formatDateUTC(date: Date): string {
   const year = date.getUTCFullYear();
   const month = String(date.getUTCMonth() + 1).padStart(2, "0");
   const day = String(date.getUTCDate()).padStart(2, "0");
@@ -53,7 +53,7 @@ function getBucketLabel(date: string, grouping: CashFlowGrouping): string {
       const dayOfWeek = current.getUTCDay() || 7;
       const startOfWeek = new Date(current);
       startOfWeek.setUTCDate(current.getUTCDate() - (dayOfWeek - 1));
-      return formatDate(startOfWeek);
+      return formatDateUTC(startOfWeek);
     }
     case "month":
       return normalized.slice(0, 7);
@@ -64,14 +64,14 @@ function getBucketLabel(date: string, grouping: CashFlowGrouping): string {
   }
 }
 
-function getBudgetPeriodRange(
+export function getBudgetPeriodRange(
   period: BudgetPeriod,
   startDate: string,
 ): { start?: string; end?: string } {
   const normalizedStartDate = normalizeDate(startDate);
 
   if (!normalizedStartDate) {
-    return { start: undefined, end: undefined };
+    return {};
   }
 
   const date = new Date(`${normalizedStartDate}T00:00:00Z`);
@@ -84,8 +84,8 @@ function getBudgetPeriodRange(
       const weekEnd = new Date(weekStart);
       weekEnd.setUTCDate(weekStart.getUTCDate() + 6);
       return {
-        start: formatDate(weekStart),
-        end: formatDate(weekEnd),
+        start: formatDateUTC(weekStart),
+        end: formatDateUTC(weekEnd),
       };
     }
     case "yearly": {
@@ -102,8 +102,8 @@ function getBudgetPeriodRange(
       const monthStart = new Date(Date.UTC(year, monthIndex, 1));
       const monthEnd = new Date(Date.UTC(year, monthIndex + 1, 0));
       return {
-        start: formatDate(monthStart),
-        end: formatDate(monthEnd),
+        start: formatDateUTC(monthStart),
+        end: formatDateUTC(monthEnd),
       };
     }
   }
@@ -115,10 +115,7 @@ export function sumIncomeForRange(
   end?: string,
 ): number {
   return transactions
-    .filter(
-      (transaction) =>
-        transaction.type === "income" && inRange(transaction.date, start, end),
-    )
+    .filter((transaction) => transaction.type === "income" && inRange(transaction.date, start, end))
     .reduce((sum, transaction) => sum + transaction.amount, 0);
 }
 
@@ -129,8 +126,7 @@ export function sumExpensesForRange(
 ): number {
   return transactions
     .filter(
-      (transaction) =>
-        transaction.type === "expense" && inRange(transaction.date, start, end),
+      (transaction) => transaction.type === "expense" && inRange(transaction.date, start, end),
     )
     .reduce((sum, transaction) => sum + transaction.amount, 0);
 }
