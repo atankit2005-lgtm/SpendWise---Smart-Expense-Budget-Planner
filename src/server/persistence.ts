@@ -1,0 +1,247 @@
+import { eq } from "drizzle-orm";
+
+import { users } from "../../db/schema";
+import type { Budget, Goal, Transaction, User } from "@/types";
+import { NotFoundError } from "./errors";
+import db, { isDatabaseConfigured } from "./db";
+import {
+  toBudget,
+  toCategory,
+  toDbPaymentMethod,
+  toGoal,
+  toNotification,
+  toTransaction,
+  toUser,
+  type FinanceSnapshot,
+} from "./mappers";
+import {
+  createBudget,
+  deleteBudget as deleteBudgetRecord,
+  listBudgetsForUser,
+  updateBudget as updateBudgetRecord,
+} from "./repositories/budgets";
+import { getCategoryForUser, listCategoriesForUser } from "./repositories/categories";
+import {
+  createGoal,
+  deleteGoal as deleteGoalRecord,
+  listGoalsForUser,
+  updateGoal as updateGoalRecord,
+} from "./repositories/goals";
+import {
+  deleteNotification as deleteNotificationRecord,
+  listNotificationsForUser,
+  markAllNotificationsRead,
+  markNotificationRead,
+  markNotificationUnread,
+} from "./repositories/notifications";
+import {
+  createTransaction,
+  deleteTransaction as deleteTransactionRecord,
+  listTransactionsForUser,
+  updateTransaction as updateTransactionRecord,
+} from "./repositories/transactions";
+import { getUserByEmail, getUserById } from "./repositories/users";
+
+export const DEMO_USER_EMAIL = "ankit.kumar@spendwise.app";
+
+export function persistenceAvailable(): boolean {
+  return isDatabaseConfigured();
+}
+
+export async function resolvePersistedUserId(): Promise<string | null> {
+  const configured = process.env.DEMO_USER_ID?.trim();
+  if (configured) {
+    try {
+      const user = await getUserById(configured);
+      return user.id;
+    } catch (error) {
+      if (!(error instanceof NotFoundError)) throw error;
+    }
+  }
+
+  const byEmail = await getUserByEmail(DEMO_USER_EMAIL);
+  return byEmail?.id ?? null;
+}
+
+export async function loadFinanceSnapshot(): Promise<FinanceSnapshot | null> {
+  if (!persistenceAvailable()) return null;
+
+  const userId = await resolvePersistedUserId();
+  if (!userId) return null;
+
+  const [user, categoryRows, transactionRows, budgetRows, goalRows, notificationRows] = await Promise.all([
+    getUserById(userId),
+    listCategoriesForUser(userId),
+    listTransactionsForUser(userId),
+    listBudgetsForUser(userId),
+    listGoalsForUser(userId),
+    listNotificationsForUser(userId),
+  ]);
+
+  return {
+    user: toUser(user),
+    categories: categoryRows.map(toCategory),
+    transactions: transactionRows.map(toTransaction),
+    budgets: budgetRows.map(toBudget),
+    goals: goalRows.map(toGoal),
+    notifications: notificationRows.map(toNotification),
+  };
+}
+
+async function requireUserId(): Promise<string> {
+  const userId = await resolvePersistedUserId();
+  if (!userId) {
+    throw new NotFoundError("No persisted SpendWise user is available. Run db:seed after migrate.");
+  }
+  return userId;
+}
+
+export async function persistUserPatch(patch: Partial<User>): Promise<User> {
+  const userId = await requireUserId();
+  const existing = await getUserById(userId);
+
+  const [updated] = await db
+    .update(users)
+    .set({
+      name: patch.name ?? existing.name,
+      email: patch.email ?? existing.email,
+      phone: patch.phone ?? existing.phone,
+      location: patch.location ?? existing.location,
+      occupation: patch.occupation ?? existing.occupation,
+      currency: patch.currency ?? existing.currency,
+      updatedAt: new Date(),
+    })
+    .where(eq(users.id, userId))
+    .returning();
+
+  if (!updated) throw new NotFoundError("User not found.");
+  return toUser(updated);
+}
+
+export async function persistCreateTransaction(input: Omit<Transaction, "id" | "createdAt">): Promise<Transaction> {
+  const userId = await requireUserId();
+  await getCategoryForUser(userId, input.categoryId);
+
+  const created = await createTransaction({
+    userId,
+    categoryId: input.categoryId,
+    amount: input.amount,
+    type: input.type,
+    description: input.description,
+    paymentMethod: toDbPaymentMethod(input.paymentMethod),
+    occurredOn: input.date,
+    notes: input.notes ?? null,
+  });
+
+  return toTransaction(created);
+}
+
+export async function persistUpdateTransaction(id: string, patch: Partial<Transaction>): Promise<Transaction> {
+  const userId = await requireUserId();
+  if (patch.categoryId) {
+    await getCategoryForUser(userId, patch.categoryId);
+  }
+
+  const updated = await updateTransactionRecord(userId, id, {
+    ...(patch.categoryId ? { categoryId: patch.categoryId } : {}),
+    ...(patch.amount !== undefined ? { amount: patch.amount } : {}),
+    ...(patch.type ? { type: patch.type } : {}),
+    ...(patch.description !== undefined ? { description: patch.description } : {}),
+    ...(patch.paymentMethod ? { paymentMethod: toDbPaymentMethod(patch.paymentMethod) } : {}),
+    ...(patch.date ? { occurredOn: patch.date } : {}),
+    ...(patch.notes !== undefined ? { notes: patch.notes ?? null } : {}),
+  });
+
+  return toTransaction(updated);
+}
+
+export async function persistDeleteTransaction(id: string): Promise<boolean> {
+  const userId = await requireUserId();
+  return deleteTransactionRecord(userId, id);
+}
+
+export async function persistCreateBudget(input: Omit<Budget, "id" | "createdAt" | "spent">): Promise<Budget> {
+  const userId = await requireUserId();
+  await getCategoryForUser(userId, input.categoryId);
+
+  const created = await createBudget({
+    userId,
+    categoryId: input.categoryId,
+    limitAmount: input.limit,
+    period: input.period,
+    startDate: input.startDate,
+  });
+
+  return toBudget(created);
+}
+
+export async function persistUpdateBudget(id: string, patch: Partial<Budget>): Promise<Budget> {
+  const userId = await requireUserId();
+  if (patch.categoryId) {
+    await getCategoryForUser(userId, patch.categoryId);
+  }
+
+  const updated = await updateBudgetRecord(userId, id, {
+    ...(patch.categoryId ? { categoryId: patch.categoryId } : {}),
+    ...(patch.limit !== undefined ? { limitAmount: patch.limit } : {}),
+    ...(patch.period ? { period: patch.period } : {}),
+    ...(patch.startDate ? { startDate: patch.startDate } : {}),
+  });
+
+  return toBudget(updated);
+}
+
+export async function persistDeleteBudget(id: string): Promise<boolean> {
+  const userId = await requireUserId();
+  return deleteBudgetRecord(userId, id);
+}
+
+export async function persistCreateGoal(input: Omit<Goal, "id" | "createdAt">): Promise<Goal> {
+  const userId = await requireUserId();
+  const created = await createGoal({
+    userId,
+    name: input.name,
+    targetAmount: input.targetAmount,
+    currentAmount: input.currentAmount,
+    targetDate: input.targetDate,
+    status: input.status,
+    note: input.note ?? null,
+  });
+  return toGoal(created);
+}
+
+export async function persistUpdateGoal(id: string, patch: Partial<Goal>): Promise<Goal> {
+  const userId = await requireUserId();
+  const updated = await updateGoalRecord(userId, id, {
+    ...(patch.name !== undefined ? { name: patch.name } : {}),
+    ...(patch.targetAmount !== undefined ? { targetAmount: patch.targetAmount } : {}),
+    ...(patch.currentAmount !== undefined ? { currentAmount: patch.currentAmount } : {}),
+    ...(patch.targetDate ? { targetDate: patch.targetDate } : {}),
+    ...(patch.status ? { status: patch.status } : {}),
+    ...(patch.note !== undefined ? { note: patch.note ?? null } : {}),
+  });
+  return toGoal(updated);
+}
+
+export async function persistDeleteGoal(id: string): Promise<boolean> {
+  const userId = await requireUserId();
+  return deleteGoalRecord(userId, id);
+}
+
+export async function persistToggleNotification(id: string, currentlyRead: boolean) {
+  const userId = await requireUserId();
+  const updated = currentlyRead
+    ? await markNotificationUnread(userId, id)
+    : await markNotificationRead(userId, id);
+  return toNotification(updated);
+}
+
+export async function persistMarkAllNotificationsRead() {
+  const userId = await requireUserId();
+  await markAllNotificationsRead(userId);
+}
+
+export async function persistDeleteNotification(id: string): Promise<boolean> {
+  const userId = await requireUserId();
+  return deleteNotificationRecord(userId, id);
+}

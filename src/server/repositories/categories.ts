@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull, or } from "drizzle-orm";
 import { type InferInsertModel, type InferSelectModel } from "drizzle-orm";
 
 import { categories } from "../../../db/schema";
@@ -12,7 +12,10 @@ export type CategoryInsert = InferInsertModel<typeof categories>;
 export async function listCategoriesForUser(userId: string): Promise<CategoryRecord[]> {
   const currentUserId = resolveUserId(userId);
 
-  return db.select().from(categories).where(eq(categories.userId, currentUserId));
+  return db
+    .select()
+    .from(categories)
+    .where(or(eq(categories.userId, currentUserId), isNull(categories.userId)));
 }
 
 export async function getCategoryForUser(userId: string, categoryId: string): Promise<CategoryRecord> {
@@ -21,7 +24,12 @@ export async function getCategoryForUser(userId: string, categoryId: string): Pr
   const rows = await db
     .select()
     .from(categories)
-    .where(and(eq(categories.id, categoryId), eq(categories.userId, currentUserId)))
+    .where(
+      and(
+        eq(categories.id, categoryId),
+        or(eq(categories.userId, currentUserId), isNull(categories.userId)),
+      ),
+    )
     .limit(1);
 
   if (!rows[0]) {
@@ -96,8 +104,12 @@ export async function updateCategory(userId: string, categoryId: string, patch: 
     updates.icon = patch.icon ?? null;
   }
 
-  if (!updates.name || !updates.name.trim()) {
+  if (updates.name !== undefined && !updates.name.trim()) {
     throw new Error("Category name is required.");
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return existing;
   }
 
   const [updated] = await db

@@ -35,10 +35,31 @@ import {
   sumExpensesForRange,
   sumIncomeForRange,
 } from "@/lib/financial-engine";
-import type { AIInsight, AppNotification, Budget, Goal, Transaction, User } from "@/types";
+import { toast } from "sonner";
+import type { AIInsight, AppNotification, Budget, Category, Goal, Transaction, User } from "@/types";
+import {
+  getFinanceSnapshotFn,
+  persistCreateBudgetFn,
+  persistCreateGoalFn,
+  persistCreateTransactionFn,
+  persistDeleteBudgetFn,
+  persistDeleteGoalFn,
+  persistDeleteNotificationFn,
+  persistDeleteTransactionFn,
+  persistMarkAllNotificationsReadFn,
+  persistToggleNotificationFn,
+  persistUpdateBudgetFn,
+  persistUpdateGoalFn,
+  persistUpdateTransactionFn,
+  persistUserFn,
+} from "@/functions/finance";
 
 function uid(prefix: string) {
   return `${prefix}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function isPersistedUuid(id: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
 }
 
 export interface FinanceContextValue {
@@ -68,7 +89,7 @@ export interface FinanceContextValue {
   unreadCount: number;
   insights: AIInsight[];
   summary: typeof accountSummary;
-  categories: typeof categories;
+  categories: Category[];
 
   /** SpendWise Intelligence (Stage 4) — deterministic, derived from the data above. */
   patterns: SpendingPattern[];
@@ -177,6 +198,31 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const [goals, setGoals] = useState<Goal[]>(initialState.goals);
 
   const [notifications, setNotifications] = useState<AppNotification[]>(initialState.notifications);
+  const [categoryList, setCategoryList] = useState<Category[]>(categories);
+  const [persistenceMode, setPersistenceMode] = useState<"local" | "database">("local");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void getFinanceSnapshotFn()
+      .then((result) => {
+        if (cancelled || result.mode !== "database" || !result.snapshot) return;
+        setPersistenceMode("database");
+        setUser(result.snapshot.user);
+        setCategoryList(result.snapshot.categories);
+        setTransactions(result.snapshot.transactions);
+        setBudgets(result.snapshot.budgets.map(normalizeBudget));
+        setGoals(result.snapshot.goals);
+        setNotifications(result.snapshot.notifications);
+      })
+      .catch((error) => {
+        console.error("SpendWise could not load database persistence; staying on local state.", error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   /* ---------------- USER ---------------- */
 
@@ -185,7 +231,12 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       ...prev,
       ...patch,
     }));
-  }, []);
+    if (persistenceMode === "database") {
+      void persistUserFn({ data: patch }).catch(() => {
+        toast.error("Could not save profile to the database.");
+      });
+    }
+  }, [persistenceMode]);
 
   /* ---------------- TRANSACTIONS ---------------- */
 
@@ -194,7 +245,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       const suggestion = categorizeTransaction(
         { description: input.description, type: input.type, categoryId: input.categoryId },
         prev,
-        categories,
+        categoryList,
       );
 
       const created: Transaction = {
@@ -204,9 +255,29 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
         createdAt: new Date().toISOString(),
       };
 
+      if (persistenceMode === "database") {
+        void persistCreateTransactionFn({
+          data: {
+            amount: created.amount,
+            type: created.type,
+            categoryId: created.categoryId,
+            description: created.description,
+            paymentMethod: created.paymentMethod,
+            date: created.date,
+            notes: created.notes,
+          },
+        })
+          .then((saved) => {
+            setTransactions((current) => [saved, ...current.filter((transaction) => transaction.id !== created.id)]);
+          })
+          .catch(() => {
+            toast.error("Could not save transaction to the database.");
+          });
+      }
+
       return [created, ...prev];
     });
-  }, []);
+  }, [categoryList, persistenceMode]);
 
   const updateTransaction = useCallback((id: string, patch: Partial<Transaction>) => {
     setTransactions((prev) => {
@@ -226,20 +297,31 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       const suggestion = categorizeTransaction(
         { description: merged.description, type: merged.type, categoryId: merged.categoryId },
         prev,
-        categories,
+        categoryList,
       );
 
       const updated: Transaction = suggestion
         ? { ...merged, categoryId: suggestion.categoryId }
         : merged;
 
+      if (persistenceMode === "database" && isPersistedUuid(id)) {
+        void persistUpdateTransactionFn({ data: { id, patch: updated } }).catch(() => {
+          toast.error("Could not update transaction in the database.");
+        });
+      }
+
       return prev.map((transaction) => (transaction.id === id ? updated : transaction));
     });
-  }, []);
+  }, [categoryList, persistenceMode]);
 
   const deleteTransaction = useCallback((id: string) => {
     setTransactions((prev) => prev.filter((transaction) => transaction.id !== id));
-  }, []);
+    if (persistenceMode === "database" && isPersistedUuid(id)) {
+      void persistDeleteTransactionFn({ data: { id } }).catch(() => {
+        toast.error("Could not delete transaction in the database.");
+      });
+    }
+  }, [persistenceMode]);
 
   /* ---------------- BUDGETS ---------------- */
 
@@ -254,7 +336,23 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     };
 
     setBudgets((prev) => [created, ...prev]);
-  }, []);
+    if (persistenceMode === "database") {
+      void persistCreateBudgetFn({
+        data: {
+          categoryId: created.categoryId,
+          limit: created.limit,
+          period: created.period,
+          startDate: created.startDate,
+        },
+      })
+        .then((saved) => {
+          setBudgets((current) => [saved, ...current.filter((budget) => budget.id !== created.id)]);
+        })
+        .catch(() => {
+          toast.error("Could not save budget to the database.");
+        });
+    }
+  }, [persistenceMode]);
 
   const updateBudget = useCallback((id: string, patch: Partial<Budget>) => {
     setBudgets((prev) =>
@@ -268,11 +366,21 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
           : budget,
       ),
     );
-  }, []);
+    if (persistenceMode === "database" && isPersistedUuid(id)) {
+      void persistUpdateBudgetFn({ data: { id, patch } }).catch(() => {
+        toast.error("Could not update budget in the database.");
+      });
+    }
+  }, [persistenceMode]);
 
   const deleteBudget = useCallback((id: string) => {
     setBudgets((prev) => prev.filter((budget) => budget.id !== id));
-  }, []);
+    if (persistenceMode === "database" && isPersistedUuid(id)) {
+      void persistDeleteBudgetFn({ data: { id } }).catch(() => {
+        toast.error("Could not delete budget in the database.");
+      });
+    }
+  }, [persistenceMode]);
 
   /* ---------------- GOALS ---------------- */
 
@@ -284,7 +392,17 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     };
 
     setGoals((prev) => [created, ...prev]);
-  }, []);
+    if (persistenceMode === "database") {
+      const { id: _ignoredId, createdAt: _ignoredCreatedAt, ...goalInput } = created;
+      void persistCreateGoalFn({ data: goalInput })
+        .then((saved) => {
+          setGoals((current) => [saved, ...current.filter((goal) => goal.id !== created.id)]);
+        })
+        .catch(() => {
+          toast.error("Could not save goal to the database.");
+        });
+    }
+  }, [persistenceMode]);
 
   const updateGoal = useCallback((id: string, patch: Partial<Goal>) => {
     setGoals((prev) =>
@@ -297,11 +415,21 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
           : goal,
       ),
     );
-  }, []);
+    if (persistenceMode === "database" && isPersistedUuid(id)) {
+      void persistUpdateGoalFn({ data: { id, patch } }).catch(() => {
+        toast.error("Could not update goal in the database.");
+      });
+    }
+  }, [persistenceMode]);
 
   const deleteGoal = useCallback((id: string) => {
     setGoals((prev) => prev.filter((goal) => goal.id !== id));
-  }, []);
+    if (persistenceMode === "database" && isPersistedUuid(id)) {
+      void persistDeleteGoalFn({ data: { id } }).catch(() => {
+        toast.error("Could not delete goal in the database.");
+      });
+    }
+  }, [persistenceMode]);
 
   /* ---------------- NOTIFICATIONS ---------------- */
 
@@ -316,7 +444,15 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
           : notification,
       ),
     );
-  }, []);
+    if (persistenceMode === "database" && isPersistedUuid(id)) {
+      const current = notifications.find((notification) => notification.id === id);
+      void persistToggleNotificationFn({
+        data: { id, currentlyRead: current?.read ?? false },
+      }).catch(() => {
+        toast.error("Could not update notification in the database.");
+      });
+    }
+  }, [notifications, persistenceMode]);
 
   const markAllRead = useCallback(() => {
     setNotifications((prev) =>
@@ -325,15 +461,26 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
         read: true,
       })),
     );
-  }, []);
+    if (persistenceMode === "database") {
+      void persistMarkAllNotificationsReadFn().catch(() => {
+        toast.error("Could not mark notifications as read in the database.");
+      });
+    }
+  }, [persistenceMode]);
 
   const deleteNotification = useCallback((id: string) => {
     setNotifications((prev) => prev.filter((notification) => notification.id !== id));
-  }, []);
+    if (persistenceMode === "database" && isPersistedUuid(id)) {
+      void persistDeleteNotificationFn({ data: { id } }).catch(() => {
+        toast.error("Could not delete notification in the database.");
+      });
+    }
+  }, [persistenceMode]);
 
   /* ---------------- LOCAL STORAGE ---------------- */
 
   useEffect(() => {
+    if (persistenceMode === "database") return;
     saveState({
       user,
       transactions,
@@ -341,7 +488,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       goals,
       notifications,
     });
-  }, [user, transactions, budgets, goals, notifications]);
+  }, [user, transactions, budgets, goals, notifications, persistenceMode]);
 
   /* ---------------- DERIVED FINANCE DATA ---------------- */
 
@@ -403,10 +550,10 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
         transactions,
         budgets: derivedBudgets,
         goals,
-        categories,
+        categories: categoryList,
         currentBalance: summary.balance,
       }),
-    [transactions, derivedBudgets, goals, summary.balance],
+    [transactions, derivedBudgets, goals, summary.balance, categoryList],
   );
 
   // Lightweight pub/sub notification so other parts of the app (or future
@@ -450,7 +597,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
         candidates.push({
           id: `ai_budget_${risk.budgetId}_critical`,
           type: "budget_exceeded",
-          title: `${categoryName(risk.categoryId)} budget exceeded`,
+          title: `${categoryList.find((category) => category.id === risk.categoryId)?.name ?? categoryName(risk.categoryId)} budget exceeded`,
           message: risk.explanation,
           read: false,
           createdAt,
@@ -459,7 +606,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
         candidates.push({
           id: `ai_budget_${risk.budgetId}_high`,
           type: "budget_warning",
-          title: `${categoryName(risk.categoryId)} budget at risk`,
+          title: `${categoryList.find((category) => category.id === risk.categoryId)?.name ?? categoryName(risk.categoryId)} budget at risk`,
           message: risk.explanation,
           read: false,
           createdAt,
@@ -490,7 +637,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       if (fresh.length === 0) return prev;
       return [...fresh, ...prev];
     });
-  }, [intelligence]);
+  }, [intelligence, categoryList]);
 
   const value = useMemo<FinanceContextValue>(() => {
     return {
@@ -521,7 +668,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
       insights: intelligence.insights,
       summary,
-      categories,
+      categories: categoryList,
 
       patterns: intelligence.patterns,
       anomalies: intelligence.anomalies,
@@ -556,6 +703,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
     intelligence,
     summary,
+    categoryList,
   ]);
 
   return <FinanceContext.Provider value={value}>{children}</FinanceContext.Provider>;

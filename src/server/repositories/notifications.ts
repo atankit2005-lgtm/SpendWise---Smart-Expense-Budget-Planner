@@ -83,3 +83,28 @@ export async function createNotification(input: {
 
   return created;
 }
+
+export async function markAllNotificationsRead(userId: string): Promise<number> {
+  const currentUserId = resolveUserId(userId);
+
+  const result = await db
+    .update(notifications)
+    .set({
+      readAt: new Date(),
+    })
+    .where(eq(notifications.userId, currentUserId))
+    .returning({ id: notifications.id });
+
+  return result.length;
+}
+
+export async function deleteNotification(userId: string, notificationId: string): Promise<boolean> {
+  const currentUserId = resolveUserId(userId);
+
+  const result = await db
+    .delete(notifications)
+    .where(and(eq(notifications.id, notificationId), eq(notifications.userId, currentUserId)))
+    .returning({ id: notifications.id });
+
+  return result.length > 0;
+}

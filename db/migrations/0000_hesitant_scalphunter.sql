@@ -1,3 +1,4 @@
+CREATE EXTENSION IF NOT EXISTS citext;--> statement-breakpoint
 CREATE TYPE "public"."analytics_range" AS ENUM('7d', '30d', '3m', '6m', '1y');--> statement-breakpoint
 CREATE TYPE "public"."budget_period" AS ENUM('weekly', 'monthly', 'yearly');--> statement-breakpoint
 CREATE TYPE "public"."goal_status" AS ENUM('active', 'paused', 'completed');--> statement-breakpoint

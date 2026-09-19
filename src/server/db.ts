@@ -1,4 +1,2 @@
-import db from "../../db";
-
-export { db };
-export default db;
+export { db, getDb, isDatabaseConfigured } from "../../db";
+export { default } from "../../db";

@@ -30,8 +30,10 @@ export async function getUserByEmail(email: string): Promise<UserRecord | null> 
 }
 
 export async function createUser(input: {
+  id?: string;
   email: string;
   name: string;
+  passwordHash?: string | null;
   phone?: string | null;
   location?: string | null;
   occupation?: string | null;
@@ -53,8 +55,10 @@ export async function createUser(input: {
   const [created] = await db
     .insert(users)
     .values({
+      ...(input.id ? { id: input.id } : {}),
       email,
       name,
+      passwordHash: input.passwordHash ?? null,
       phone: input.phone ?? null,
       location: input.location ?? null,
       occupation: input.occupation ?? null,

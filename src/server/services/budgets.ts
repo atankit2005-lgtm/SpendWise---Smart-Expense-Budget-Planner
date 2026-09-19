@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, gte, sql } from "drizzle-orm";
 
 import { budgets, transactions } from "../../../db/schema";
 import { resolveUserId } from "../auth";
@@ -7,7 +7,7 @@ import db from "../db";
 export async function deriveBudgetSpentForUser(
   userId: string,
   categoryId: string,
-  period: "weekly" | "monthly" | "yearly",
+  _period: "weekly" | "monthly" | "yearly",
   startDate: string,
 ): Promise<number> {
   const currentUserId = resolveUserId(userId);
@@ -20,6 +20,7 @@ export async function deriveBudgetSpentForUser(
         eq(transactions.userId, currentUserId),
         eq(transactions.categoryId, categoryId),
         eq(transactions.type, "expense"),
+        gte(transactions.occurredOn, startDate),
       ),
     );
 
