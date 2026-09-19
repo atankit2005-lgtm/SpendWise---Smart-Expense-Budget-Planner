@@ -102,8 +102,6 @@ export interface FinanceContextValue {
 
 const FinanceContext = createContext<FinanceContextValue | null>(null);
 
-const STORAGE_KEY = "spendwise-mock-state";
-
 interface PersistedState {
   user: User;
   transactions: Transaction[];
@@ -113,47 +111,15 @@ interface PersistedState {
 }
 
 function loadInitialState(): PersistedState {
-  if (typeof window === "undefined") {
-    return {
-      user: currentUser,
-      transactions: seedTransactions,
-      budgets: seedBudgets,
-      goals: seedGoals,
-      notifications: seedNotifications,
-    };
-  }
-
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-
-    if (!raw) {
-      throw new Error("No saved SpendWise state");
-    }
-
-    const parsed = JSON.parse(raw);
-
-    return {
-      user: parsed.user ?? currentUser,
-
-      transactions: Array.isArray(parsed.transactions) ? parsed.transactions : seedTransactions,
-
-      budgets: Array.isArray(parsed.budgets)
-        ? parsed.budgets.map(normalizeBudget)
-        : seedBudgets.map(normalizeBudget),
-
-      goals: Array.isArray(parsed.goals) ? parsed.goals : seedGoals,
-
-      notifications: Array.isArray(parsed.notifications) ? parsed.notifications : seedNotifications,
-    };
-  } catch {
-    return {
-      user: currentUser,
-      transactions: seedTransactions,
-      budgets: seedBudgets.map(normalizeBudget),
-      goals: seedGoals,
-      notifications: seedNotifications,
-    };
-  }
+  // This render-safe state is immediately replaced with the authenticated
+  // PostgreSQL snapshot. Browser storage is never a financial data source.
+  return {
+    user: currentUser,
+    transactions: seedTransactions,
+    budgets: seedBudgets.map(normalizeBudget),
+    goals: seedGoals,
+    notifications: seedNotifications,
+  };
 }
 
 function normalizeBudget(raw: Budget): Budget {
@@ -161,29 +127,6 @@ function normalizeBudget(raw: Budget): Budget {
     ...raw,
     spent: 0,
   };
-}
-
-function persistableBudgets(budgets: Budget[]): Budget[] {
-  return budgets.map((budget) => ({
-    ...budget,
-    spent: 0,
-  }));
-}
-
-function saveState(state: PersistedState) {
-  if (typeof window === "undefined") return;
-
-  try {
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        ...state,
-        budgets: persistableBudgets(state.budgets),
-      }),
-    );
-  } catch {
-    // Gracefully ignore localStorage errors.
-  }
 }
 
 export function FinanceProvider({ children }: { children: ReactNode }) {
@@ -199,15 +142,16 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
   const [notifications, setNotifications] = useState<AppNotification[]>(initialState.notifications);
   const [categoryList, setCategoryList] = useState<Category[]>(categories);
-  const [persistenceMode, setPersistenceMode] = useState<"local" | "database">("local");
+  // All mutations in protected screens target the server. This constant keeps
+  // the existing optimistic UI behavior while removing the local fallback.
+  const persistenceMode = "database" as const;
 
   useEffect(() => {
     let cancelled = false;
 
     void getFinanceSnapshotFn()
       .then((result) => {
-        if (cancelled || result.mode !== "database" || !result.snapshot) return;
-        setPersistenceMode("database");
+        if (cancelled) return;
         setUser(result.snapshot.user);
         setCategoryList(result.snapshot.categories);
         setTransactions(result.snapshot.transactions);
@@ -215,9 +159,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
         setGoals(result.snapshot.goals);
         setNotifications(result.snapshot.notifications);
       })
-      .catch((error) => {
-        console.error("SpendWise could not load database persistence; staying on local state.", error);
-      });
+      .catch((error) => console.error("SpendWise could not load authenticated data.", error));
 
     return () => {
       cancelled = true;
@@ -476,19 +418,6 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       });
     }
   }, [persistenceMode]);
-
-  /* ---------------- LOCAL STORAGE ---------------- */
-
-  useEffect(() => {
-    if (persistenceMode === "database") return;
-    saveState({
-      user,
-      transactions,
-      budgets,
-      goals,
-      notifications,
-    });
-  }, [user, transactions, budgets, goals, notifications, persistenceMode]);
 
   /* ---------------- DERIVED FINANCE DATA ---------------- */
 

@@ -304,7 +304,7 @@ function InsightsPage() {
           ) : (
             <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {budgetRisks.map((risk) => {
-                const style = riskStyles[risk.level] ?? riskStyles.low!;
+                const style = riskStyles[risk.level] ?? riskStyles["low"]!;
                 const RiskIcon = style.icon;
                 return (
                   <li key={risk.budgetId} className="rounded-lg border border-border p-4">

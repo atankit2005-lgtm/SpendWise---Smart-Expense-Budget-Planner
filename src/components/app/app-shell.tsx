@@ -1,4 +1,4 @@
-import { Link, useRouterState } from "@tanstack/react-router";
+import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   Bell,
   ChartPie,
@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { useFinance } from "@/store/finance";
+import { logoutFn } from "@/functions/auth";
 
 const nav = [
   { to: "/app", label: "Overview", icon: LayoutDashboard, exact: true },
@@ -112,6 +113,11 @@ function NavList({ onNavigate }: { onNavigate?: () => void }) {
 
 function UserMenu() {
   const { user } = useFinance();
+  const navigate = useNavigate();
+  const logout = async () => {
+    await logoutFn();
+    navigate({ to: "/login" });
+  };
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -138,10 +144,8 @@ function UserMenu() {
           <Link to="/app/settings">Settings</Link>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem asChild>
-          <Link to="/login">
-            <LogOut className="size-4" aria-hidden /> Log out
-          </Link>
+        <DropdownMenuItem onSelect={() => void logout()}>
+          <LogOut className="size-4" aria-hidden /> Log out
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -160,7 +164,12 @@ export function AppShell({
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const navigate = useNavigate();
   const { unreadCount } = useFinance();
+  const logout = async () => {
+    await logoutFn();
+    navigate({ to: "/login" });
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -169,12 +178,13 @@ export function AppShell({
           <BrandMark />
         </Link>
         <NavList />
-        <Link
-          to="/login"
+        <button
+          type="button"
+          onClick={() => void logout()}
           className="mt-4 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground"
         >
           <LogOut className="size-4" aria-hidden /> Logout
-        </Link>
+        </button>
       </aside>
 
       {open ? (

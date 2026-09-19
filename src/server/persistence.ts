@@ -40,34 +40,15 @@ import {
   listTransactionsForUser,
   updateTransaction as updateTransactionRecord,
 } from "./repositories/transactions";
-import { getUserByEmail, getUserById } from "./repositories/users";
-
-export const DEMO_USER_EMAIL = "ankit.kumar@spendwise.app";
+import { getUserById } from "./repositories/users";
+import { requireSessionUserId } from "./authentication";
 
 export function persistenceAvailable(): boolean {
   return isDatabaseConfigured();
 }
 
-export async function resolvePersistedUserId(): Promise<string | null> {
-  const configured = process.env.DEMO_USER_ID?.trim();
-  if (configured) {
-    try {
-      const user = await getUserById(configured);
-      return user.id;
-    } catch (error) {
-      if (!(error instanceof NotFoundError)) throw error;
-    }
-  }
-
-  const byEmail = await getUserByEmail(DEMO_USER_EMAIL);
-  return byEmail?.id ?? null;
-}
-
-export async function loadFinanceSnapshot(): Promise<FinanceSnapshot | null> {
-  if (!persistenceAvailable()) return null;
-
-  const userId = await resolvePersistedUserId();
-  if (!userId) return null;
+export async function loadFinanceSnapshot(): Promise<FinanceSnapshot> {
+  const userId = await requireSessionUserId();
 
   const [user, categoryRows, transactionRows, budgetRows, goalRows, notificationRows] = await Promise.all([
     getUserById(userId),
@@ -89,11 +70,7 @@ export async function loadFinanceSnapshot(): Promise<FinanceSnapshot | null> {
 }
 
 async function requireUserId(): Promise<string> {
-  const userId = await resolvePersistedUserId();
-  if (!userId) {
-    throw new NotFoundError("No persisted SpendWise user is available. Run db:seed after migrate.");
-  }
-  return userId;
+  return requireSessionUserId();
 }
 
 export async function persistUserPatch(patch: Partial<User>): Promise<User> {

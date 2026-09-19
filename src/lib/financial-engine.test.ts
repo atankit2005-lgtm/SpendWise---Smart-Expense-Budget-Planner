@@ -286,7 +286,7 @@ test("deleting an expense reduces the derived budget spend", () => {
     makeTransaction({ id: "t2", type: "expense", categoryId: "cat_food", amount: 900, date: "2026-01-20" }),
   ];
 
-  const remainingTransactions = [transactions[0]];
+  const remainingTransactions = [transactions[0]!];
   assert.equal(computeBudgetSpend(budget, transactions), 1500);
   assert.equal(computeBudgetSpend(budget, remainingTransactions), 600);
 });
@@ -304,8 +304,8 @@ test("duplicate budgets for the same category do not multiply the same transacti
 
   const map = computeBudgetSpendingMap(budgets, transactions);
 
-  assert.equal(map.bdg_1, 1500);
-  assert.equal(map.bdg_2, 1500);
+  assert.equal(map["bdg_1"], 1500);
+  assert.equal(map["bdg_2"], 1500);
 });
 
 test("zero-limit budgets do not divide by zero during utilization", () => {

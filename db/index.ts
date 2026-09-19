@@ -6,14 +6,14 @@ import * as schema from "./schema";
 export type SpendWiseDatabase = PostgresJsDatabase<typeof schema>;
 
 export function isDatabaseConfigured(): boolean {
-  return Boolean(process.env.DATABASE_URL?.trim());
+  return Boolean(process.env["DATABASE_URL"]?.trim());
 }
 
 let client: ReturnType<typeof postgres> | undefined;
 let dbInstance: SpendWiseDatabase | undefined;
 
 export function getDb(): SpendWiseDatabase {
-  const connectionString = process.env.DATABASE_URL?.trim();
+  const connectionString = process.env["DATABASE_URL"]?.trim();
 
   if (!connectionString) {
     throw new Error("DATABASE_URL is required for the database layer.");

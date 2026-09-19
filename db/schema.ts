@@ -64,6 +64,21 @@ export const users = pgTable(
   },
 );
 
+/** Opaque, revocable login sessions. Only a SHA-256 digest of the browser token is stored. */
+export const sessions = pgTable(
+  "sessions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: char("token_hash", { length: 64 }).notNull().unique(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userExpiresIdx: index("sessions_user_expires_at_idx").on(table.userId, table.expiresAt),
+  }),
+);
+
 export const categories = pgTable(
   "categories",
   {

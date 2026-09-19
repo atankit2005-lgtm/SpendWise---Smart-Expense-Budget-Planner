@@ -5,6 +5,7 @@ import { AuthLayout } from "@/components/auth/auth-layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { loginFn } from "@/functions/auth";
 
 export const Route = createFileRoute("/login")({
   head: () => ({
@@ -25,7 +26,7 @@ function LoginPage() {
   const [errors, setErrors] = useState<Errors>({});
   const [loading, setLoading] = useState(false);
 
-  function submit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
     const next: Errors = {};
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(values.email)) next.email = "Enter a valid email address.";
@@ -33,11 +34,15 @@ function LoginPage() {
     setErrors(next);
     if (Object.keys(next).length) return;
     setLoading(true);
-    setTimeout(() => {
+    try {
+      await loginFn({ data: values });
       setLoading(false);
       toast.success("Welcome back to SpendWise");
       navigate({ to: "/app" });
-    }, 700);
+    } catch (error) {
+      setLoading(false);
+      toast.error(error instanceof Error ? error.message : "Could not log in.");
+    }
   }
 
   return (

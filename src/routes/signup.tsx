@@ -5,6 +5,7 @@ import { AuthLayout } from "@/components/auth/auth-layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { signupFn } from "@/functions/auth";
 
 export const Route = createFileRoute("/signup")({
   head: () => ({
@@ -26,7 +27,7 @@ function SignupPage() {
   const [errors, setErrors] = useState<Partial<Record<Field, string>>>({});
   const [loading, setLoading] = useState(false);
 
-  function submit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
     const next: Partial<Record<Field, string>> = {};
     if (values.name.trim().length < 2) next.name = "Enter your full name.";
@@ -36,11 +37,15 @@ function SignupPage() {
     setErrors(next);
     if (Object.keys(next).length) return;
     setLoading(true);
-    setTimeout(() => {
+    try {
+      await signupFn({ data: { name: values.name, email: values.email, password: values.password } });
       setLoading(false);
       toast.success("Account created — welcome to SpendWise");
       navigate({ to: "/app" });
-    }, 700);
+    } catch (error) {
+      setLoading(false);
+      toast.error(error instanceof Error ? error.message : "Could not create your account.");
+    }
   }
 
   const field = (id: Field, label: string, type: string, placeholder: string, autoComplete: string) => (

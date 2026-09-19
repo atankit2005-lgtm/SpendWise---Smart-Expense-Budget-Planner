@@ -19,27 +19,14 @@ import {
   persistenceAvailable,
 } from "@/server/persistence";
 
-export type FinancePersistenceMode = "local" | "database";
-
 export interface FinanceSnapshotResponse {
-  mode: FinancePersistenceMode;
-  snapshot?: FinanceSnapshot;
+  snapshot: FinanceSnapshot;
 }
 
 export const getFinanceSnapshotFn = createServerFn({ method: "GET" }).handler(
   async (): Promise<FinanceSnapshotResponse> => {
-    if (!persistenceAvailable()) {
-      return { mode: "local" };
-    }
-
-    try {
-      const snapshot = await loadFinanceSnapshot();
-      if (!snapshot) return { mode: "local" };
-      return { mode: "database", snapshot };
-    } catch (error) {
-      console.error("SpendWise database snapshot unavailable; using local persistence.", error);
-      return { mode: "local" };
-    }
+    if (!persistenceAvailable()) throw new Error("Database persistence is not configured.");
+    return { snapshot: await loadFinanceSnapshot() };
   },
 );
 
