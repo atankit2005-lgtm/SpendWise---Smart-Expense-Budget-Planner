@@ -110,7 +110,7 @@ CREATE TABLE "user_settings" (
 --> statement-breakpoint
 CREATE TABLE "users" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"email" "CITEXT" NOT NULL,
+	"email" citext NOT NULL,
 	"name" text NOT NULL,
 	"phone" text,
 	"location" text,

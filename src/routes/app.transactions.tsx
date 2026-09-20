@@ -24,7 +24,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { categories, categoryName } from "@/data/mock";
 import { formatDate, formatINR } from "@/lib/format";
 import { useFinance } from "@/store/finance";
 import type { PaymentMethod, Transaction, TransactionType } from "@/types";
@@ -57,7 +56,7 @@ type FormState = {
 const emptyForm: FormState = {
   amount: "",
   type: "expense",
-  categoryId: "cat_food",
+  categoryId: "",
   description: "",
   paymentMethod: "UPI",
   date: new Date().toISOString().slice(0, 10),
@@ -65,7 +64,7 @@ const emptyForm: FormState = {
 };
 
 function TransactionsPage() {
-  const { transactions, addTransaction, updateTransaction, deleteTransaction } = useFinance();
+  const { transactions, categories, addTransaction, updateTransaction, deleteTransaction } = useFinance();
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("all");
   const [type, setType] = useState("all");
@@ -84,7 +83,7 @@ function TransactionsPage() {
       const matchesQuery =
         !q ||
         t.description.toLowerCase().includes(q) ||
-        categoryName(t.categoryId).toLowerCase().includes(q) ||
+        (categories.find((c) => c.id === t.categoryId)?.name ?? "").toLowerCase().includes(q) ||
         t.paymentMethod.toLowerCase().includes(q);
       const matchesCategory = category === "all" || t.categoryId === category;
       const matchesType = type === "all" || t.type === type;
@@ -99,7 +98,10 @@ function TransactionsPage() {
 
   function openAdd() {
     setEditing(null);
-    setForm(emptyForm);
+    setForm({
+      ...emptyForm,
+      categoryId: categories.find((c) => c.type === "expense")?.id ?? "",
+    });
     setErrors({});
     setFormOpen(true);
   }
@@ -245,7 +247,7 @@ function TransactionsPage() {
                     <tr key={t.id} className="hover:bg-elevated/40">
                       <td className="whitespace-nowrap py-3 pr-4 text-muted-foreground">{formatDate(t.date)}</td>
                       <td className="py-3 pr-4 font-medium">{t.description}</td>
-                      <td className="py-3 pr-4 text-muted-foreground">{categoryName(t.categoryId)}</td>
+                      <td className="py-3 pr-4 text-muted-foreground">{categories.find((c) => c.id === t.categoryId)?.name ?? "Uncategorized"}</td>
                       <td className="hidden py-3 pr-4 text-muted-foreground md:table-cell">{t.paymentMethod}</td>
                       <td className={`whitespace-nowrap py-3 pr-4 text-right font-semibold ${t.type === "income" ? "text-primary" : ""}`}>
                         {t.type === "income" ? "+" : "−"}
@@ -318,7 +320,7 @@ function TransactionsPage() {
                     setForm((f) => ({
                       ...f,
                       type: v as TransactionType,
-                      categoryId: categories.find((c) => c.type === v)?.id ?? f.categoryId,
+                      categoryId: categories.find((c) => c.type === v)?.id ?? "",
                     }))
                   }
                 >

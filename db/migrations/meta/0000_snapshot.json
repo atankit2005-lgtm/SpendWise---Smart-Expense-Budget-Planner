@@ -1005,7 +1005,7 @@
         },
         "email": {
           "name": "email",
-          "type": "CITEXT",
+          "type": "citext",
           "primaryKey": false,
           "notNull": true
         },

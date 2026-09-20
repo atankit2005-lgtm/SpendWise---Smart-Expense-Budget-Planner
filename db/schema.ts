@@ -18,8 +18,8 @@ import {
 
 const citext = customType<{ data: string; driverData: string }>({
   dataType() {
-    return "CITEXT";
-  },
+  return "citext";
+},
 });
 
 export const transactionTypeEnum = pgEnum("transaction_type", ["income", "expense"]);
