@@ -2,13 +2,11 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
 
-const connectionString = process.env.DATABASE_URL;
+import { requireDatabaseUrl } from "../src/server/env";
 
-if (!connectionString) {
-  throw new Error("DATABASE_URL is required for database migrations.");
-}
-
-const client = postgres(connectionString, { max: 1 });
+// Applies already-reviewed migrations from db/migrations. Never generates
+// migrations and never seeds — generation is a development-only workflow.
+const client = postgres(requireDatabaseUrl(), { max: 1 });
 const db = drizzle(client);
 
 async function main() {

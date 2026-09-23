@@ -9,6 +9,7 @@ import {
   transactions as seedTransactions,
 } from "../src/data/mock";
 import { toDbPaymentMethod } from "../src/server/mappers";
+import { isProduction } from "../src/server/env";
 import { getDb, isDatabaseConfigured } from "./index";
 import { budgets, categories, goals, notifications, transactions, userSettings, users } from "./schema";
 
@@ -28,6 +29,12 @@ const CATEGORY_IDS: Record<string, string> = {
 };
 
 async function main() {
+  if (isProduction()) {
+    throw new Error(
+      "db/seed.ts inserts development sample data and refuses to run when NODE_ENV=production.",
+    );
+  }
+
   if (!isDatabaseConfigured()) {
     throw new Error("DATABASE_URL is required to seed the database.");
   }
