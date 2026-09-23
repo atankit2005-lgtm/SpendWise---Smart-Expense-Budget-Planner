@@ -37,6 +37,9 @@ import {
 } from "@/lib/financial-engine";
 import { toast } from "sonner";
 import type { AIInsight, AppNotification, Budget, Category, Goal, Transaction, User } from "@/types";
+import type { FinanceSnapshot } from "@/server/mappers";
+import { createRealtimeSync } from "@/lib/realtime/client";
+import { snapshotToState } from "./snapshot-state";
 import {
   getFinanceSnapshotFn,
   persistCreateBudgetFn,
@@ -142,9 +145,26 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
   const [notifications, setNotifications] = useState<AppNotification[]>(initialState.notifications);
   const [categoryList, setCategoryList] = useState<Category[]>(categories);
+  // Set only after the authenticated snapshot load succeeds, so it doubles as
+  // "there is a valid session" — the gate for the realtime SSE connection.
+  // Logged-out visitors (public pages) never load a snapshot and never
+  // connect. A successful load with a different user id replaces it, which
+  // re-runs the realtime effect: old connection closed, new one opened.
+  const [authedUserId, setAuthedUserId] = useState<string | null>(null);
   // All mutations in protected screens target the server. This constant keeps
   // the existing optimistic UI behavior while removing the local fallback.
   const persistenceMode = "database" as const;
+
+  const applySnapshot = useCallback((snapshot: FinanceSnapshot) => {
+    const state = snapshotToState(snapshot);
+    setUser(state.user);
+    setCategoryList(state.categories);
+    setTransactions(state.transactions);
+    setBudgets(state.budgets);
+    setGoals(state.goals);
+    setNotifications(state.notifications);
+    setAuthedUserId(state.user.id);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -152,19 +172,33 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     void getFinanceSnapshotFn()
       .then((result) => {
         if (cancelled) return;
-        setUser(result.snapshot.user);
-        setCategoryList(result.snapshot.categories);
-        setTransactions(result.snapshot.transactions);
-        setBudgets(result.snapshot.budgets.map(normalizeBudget));
-        setGoals(result.snapshot.goals);
-        setNotifications(result.snapshot.notifications);
+        applySnapshot(result.snapshot);
       })
       .catch((error) => console.error("SpendWise could not load authenticated data.", error));
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [applySnapshot]);
+
+  // Stage 6.3: realtime invalidation. Each supported SSE event means "the
+  // authoritative persisted state changed somewhere" — possibly in another
+  // tab or session — so the response is always the same: refetch the snapshot
+  // through the existing server function and replace base state wholesale.
+  // This path only ever reads; it never calls a persistence mutation, so it
+  // cannot feed back into the server-side publisher and create a loop.
+  useEffect(() => {
+    if (!authedUserId) return;
+
+    const sync = createRealtimeSync({
+      onInvalidation: async () => {
+        const result = await getFinanceSnapshotFn();
+        applySnapshot(result.snapshot);
+      },
+    });
+
+    return () => sync.close();
+  }, [authedUserId, applySnapshot]);
 
   /* ---------------- USER ---------------- */
 
