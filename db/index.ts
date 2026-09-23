@@ -2,22 +2,19 @@ import postgres from "postgres";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 
 import * as schema from "./schema";
+import { getDatabaseUrl, requireDatabaseUrl } from "../src/server/env";
 
 export type SpendWiseDatabase = PostgresJsDatabase<typeof schema>;
 
 export function isDatabaseConfigured(): boolean {
-  return Boolean(process.env["DATABASE_URL"]?.trim());
+  return Boolean(getDatabaseUrl());
 }
 
 let client: ReturnType<typeof postgres> | undefined;
 let dbInstance: SpendWiseDatabase | undefined;
 
 export function getDb(): SpendWiseDatabase {
-  const connectionString = process.env["DATABASE_URL"]?.trim();
-
-  if (!connectionString) {
-    throw new Error("DATABASE_URL is required for the database layer.");
-  }
+  const connectionString = requireDatabaseUrl();
 
   if (!dbInstance) {
     client = postgres(connectionString, { max: 10 });

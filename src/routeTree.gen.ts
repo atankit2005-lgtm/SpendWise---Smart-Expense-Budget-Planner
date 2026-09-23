@@ -15,6 +15,8 @@ import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as SignupRouteImport } from './routes/signup'
+import { Route as ApiHealthRouteImport } from './routes/api/health'
+import { Route as ApiReadyRouteImport } from './routes/api/ready'
 import { Route as ApiRealtimeRouteImport } from './routes/api/realtime'
 import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as AppAiInsightsRouteImport } from './routes/app.ai-insights'
@@ -54,6 +56,16 @@ const ResetPasswordRoute = ResetPasswordRouteImport.update({
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
   path: '/signup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiHealthRoute = ApiHealthRouteImport.update({
+  id: '/api/health',
+  path: '/api/health',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiReadyRoute = ApiReadyRouteImport.update({
+  id: '/api/ready',
+  path: '/api/ready',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiRealtimeRoute = ApiRealtimeRouteImport.update({
@@ -114,6 +126,8 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
+  '/api/health': typeof ApiHealthRoute
+  '/api/ready': typeof ApiReadyRoute
   '/api/realtime': typeof ApiRealtimeRoute
   '/app/ai-insights': typeof AppAiInsightsRoute
   '/app/analytics': typeof AppAnalyticsRoute
@@ -131,6 +145,8 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
+  '/api/health': typeof ApiHealthRoute
+  '/api/ready': typeof ApiReadyRoute
   '/api/realtime': typeof ApiRealtimeRoute
   '/app/ai-insights': typeof AppAiInsightsRoute
   '/app/analytics': typeof AppAnalyticsRoute
@@ -150,6 +166,8 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
+  '/api/health': typeof ApiHealthRoute
+  '/api/ready': typeof ApiReadyRoute
   '/api/realtime': typeof ApiRealtimeRoute
   '/app/ai-insights': typeof AppAiInsightsRoute
   '/app/analytics': typeof AppAnalyticsRoute
@@ -170,6 +188,8 @@ export interface FileRouteTypes {
     | '/login'
     | '/reset-password'
     | '/signup'
+    | '/api/health'
+    | '/api/ready'
     | '/api/realtime'
     | '/app/ai-insights'
     | '/app/analytics'
@@ -187,6 +207,8 @@ export interface FileRouteTypes {
     | '/login'
     | '/reset-password'
     | '/signup'
+    | '/api/health'
+    | '/api/ready'
     | '/api/realtime'
     | '/app/ai-insights'
     | '/app/analytics'
@@ -205,6 +227,8 @@ export interface FileRouteTypes {
     | '/login'
     | '/reset-password'
     | '/signup'
+    | '/api/health'
+    | '/api/ready'
     | '/api/realtime'
     | '/app/ai-insights'
     | '/app/analytics'
@@ -224,6 +248,8 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
   SignupRoute: typeof SignupRoute
+  ApiHealthRoute: typeof ApiHealthRoute
+  ApiReadyRoute: typeof ApiReadyRoute
   ApiRealtimeRoute: typeof ApiRealtimeRoute
 }
 
@@ -269,6 +295,20 @@ declare module '@tanstack/react-router' {
       path: '/signup'
       fullPath: '/signup'
       preLoaderRoute: typeof SignupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/health': {
+      id: '/api/health'
+      path: '/api/health'
+      fullPath: '/api/health'
+      preLoaderRoute: typeof ApiHealthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/ready': {
+      id: '/api/ready'
+      path: '/api/ready'
+      fullPath: '/api/ready'
+      preLoaderRoute: typeof ApiReadyRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/realtime': {
@@ -377,6 +417,8 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   ResetPasswordRoute: ResetPasswordRoute,
   SignupRoute: SignupRoute,
+  ApiHealthRoute: ApiHealthRoute,
+  ApiReadyRoute: ApiReadyRoute,
   ApiRealtimeRoute: ApiRealtimeRoute,
 }
 export const routeTree = rootRouteImport
