@@ -111,4 +111,34 @@ describe("realtime subscription registry", () => {
 
     unsubscribe();
   });
+
+  it("still delivers to later subscribers when an earlier subscriber throws", () => {
+    const user = userId();
+    const receivedAfter: RealtimeEvent[] = [];
+    const unsubBad = subscribe(user, () => {
+      throw new Error("subscriber blew up mid-delivery");
+    });
+    const unsubGood = subscribe(user, (event) => receivedAfter.push(event));
+
+    assert.doesNotThrow(() => publishRealtimeEvent(user, { type: "transaction.changed" }));
+    assert.equal(receivedAfter.length, 1, "the healthy subscriber must still receive the event");
+
+    unsubBad();
+    unsubGood();
+  });
+
+  it("never propagates subscriber errors to the publisher", () => {
+    const user = userId();
+    const unsubFirst = subscribe(user, () => {
+      throw new Error("first subscriber fails");
+    });
+    const unsubSecond = subscribe(user, () => {
+      throw new Error("second subscriber fails too");
+    });
+
+    assert.doesNotThrow(() => publishRealtimeEvent(user, { type: "budget.changed" }));
+
+    unsubFirst();
+    unsubSecond();
+  });
 });

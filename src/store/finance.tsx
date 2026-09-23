@@ -39,6 +39,7 @@ import { toast } from "sonner";
 import type { AIInsight, AppNotification, Budget, Category, Goal, Transaction, User } from "@/types";
 import type { FinanceSnapshot } from "@/server/mappers";
 import { createRealtimeSync } from "@/lib/realtime/client";
+import { onSessionEnded } from "@/lib/realtime/session-signal";
 import { snapshotToState } from "./snapshot-state";
 import {
   getFinanceSnapshotFn,
@@ -199,6 +200,12 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
     return () => sync.close();
   }, [authedUserId, applySnapshot]);
+
+  // Stage 6.4: logout is a client-side navigation and this root-level
+  // provider stays mounted across it, so the session-ended signal is what
+  // drops the authenticated state here. That closes the SSE connection and
+  // cancels any pending reconnect timer via the realtime effect's cleanup.
+  useEffect(() => onSessionEnded(() => setAuthedUserId(null)), []);
 
   /* ---------------- USER ---------------- */
 

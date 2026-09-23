@@ -287,4 +287,87 @@ describe("realtime client synchronization (Stage 6.3)", () => {
     sync.close();
     assert.doesNotThrow(() => sync.close());
   });
+
+  it("restores normal event handling after a successful reconnect", async () => {
+    const { sync, timers, socket, invalidations } = setup();
+
+    socket().emit("error");
+    timers.runNextTimer();
+    const reconnected = socket();
+    assert.equal(FakeEventSource.instances.length, 2, "reconnect must open exactly one new socket");
+    assert.equal(reconnected.closed, false);
+
+    reconnected.emit("transaction.changed", frame("transaction.changed"));
+    await flushMicrotasks();
+
+    assert.equal(invalidations(), 1, "reconnected socket must deliver events normally");
+    sync.close();
+  });
+
+  it("syncs once per event when no fetch is active (no over-coalescing)", async () => {
+    const { sync, socket, invalidations } = setup();
+
+    for (const type of ["transaction.changed", "budget.changed", "goal.changed"] as const) {
+      socket().emit(type, frame(type));
+      await flushMicrotasks();
+    }
+
+    assert.equal(invalidations(), 3, "sequential idle events must each synchronize");
+    sync.close();
+  });
+
+  it("still performs the trailing sync when the in-flight fetch fails", async () => {
+    let attempt = 0;
+    const gate = deferred();
+    const { sync, socket, invalidations } = setup(() => {
+      attempt += 1;
+      return attempt === 1 ? gate.promise.then(() => Promise.reject(new Error("refetch failed"))) : Promise.resolve();
+    });
+
+    socket().emit("transaction.changed", frame("transaction.changed"));
+    socket().emit("notification.changed", frame("notification.changed"));
+    await flushMicrotasks();
+    assert.equal(invalidations(), 1);
+
+    gate.resolve(); // first fetch settles as a failure
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    assert.equal(invalidations(), 2, "the queued trailing sync must recover after the failure");
+    sync.close();
+  });
+
+  it("ignores structurally valid but non-event payloads", async () => {
+    const { sync, socket, invalidations } = setup();
+
+    socket().emit("transaction.changed", "[]");
+    socket().emit("transaction.changed", '"transaction.changed"');
+    socket().emit("transaction.changed", "123");
+    await flushMicrotasks();
+    assert.equal(invalidations(), 0);
+
+    // A well-formed event with extra (ignored) fields is still accepted —
+    // only `type` is validated; nothing else on the wire is ever trusted.
+    socket().emit(
+      "transaction.changed",
+      JSON.stringify({ type: "transaction.changed", publishedAt: new Date().toISOString(), futureField: 1 }),
+    );
+    await flushMicrotasks();
+    assert.equal(invalidations(), 1);
+    sync.close();
+  });
+
+  it("stays silent under a flood of unknown/duplicate irrelevant events", async () => {
+    const { sync, socket, invalidations } = setup();
+
+    for (let i = 0; i < 50; i += 1) {
+      socket().emit("user.changed", frame("user.changed"));
+      socket().emit("message", undefined);
+      socket().emit("transaction.changed", "garbage");
+    }
+    await flushMicrotasks();
+
+    assert.equal(invalidations(), 0);
+    sync.close();
+  });
 });

@@ -58,6 +58,12 @@ export function subscribe(userId: string, subscriber: RealtimeSubscriber): () =>
  * Safe to call when the user has no open connections — this is expected to
  * happen constantly (most mutations happen while the user has no realtime
  * tab open) and must never throw.
+ *
+ * Delivery is isolated per subscriber (Stage 6.4): one throwing subscriber —
+ * e.g. a response whose connection died between cleanup ticks — must neither
+ * propagate to the publisher (a committed database mutation can never be
+ * failed by realtime delivery) nor interrupt delivery to the remaining
+ * subscribers for the same user.
  */
 export function publishRealtimeEvent(userId: string, input: RealtimeEventInput): void {
   const subscribers = subscribersByUser.get(userId);
@@ -70,7 +76,12 @@ export function publishRealtimeEvent(userId: string, input: RealtimeEventInput):
   };
 
   for (const subscriber of subscribers) {
-    subscriber(event);
+    try {
+      subscriber(event);
+    } catch {
+      // Isolated on purpose; dead subscribers are cleaned up by the stream's
+      // cancel path / unsubscribe, not here.
+    }
   }
 }
 

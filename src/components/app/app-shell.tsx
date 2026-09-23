@@ -27,6 +27,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useFinance } from "@/store/finance";
 import { logoutFn } from "@/functions/auth";
+import { signalSessionEnded } from "@/lib/realtime/session-signal";
 
 const nav = [
   { to: "/app", label: "Overview", icon: LayoutDashboard, exact: true },
@@ -116,6 +117,7 @@ function UserMenu() {
   const navigate = useNavigate();
   const logout = async () => {
     await logoutFn();
+    signalSessionEnded();
     navigate({ to: "/login" });
   };
   return (
@@ -168,6 +170,7 @@ export function AppShell({
   const { unreadCount } = useFinance();
   const logout = async () => {
     await logoutFn();
+    signalSessionEnded();
     navigate({ to: "/login" });
   };
 
