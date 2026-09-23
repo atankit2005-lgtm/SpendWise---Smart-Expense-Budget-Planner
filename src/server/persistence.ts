@@ -42,6 +42,7 @@ import {
 } from "./repositories/transactions";
 import { getUserById } from "./repositories/users";
 import { requireSessionUserId } from "./authentication";
+import { publishPersistenceEvent } from "./realtime/publish";
 
 export function persistenceAvailable(): boolean {
   return isDatabaseConfigured();
@@ -92,6 +93,7 @@ export async function persistUserPatch(patch: Partial<User>): Promise<User> {
     .returning();
 
   if (!updated) throw new NotFoundError("User not found.");
+  publishPersistenceEvent(userId, "finance.snapshot.invalidated");
   return toUser(updated);
 }
 
@@ -110,6 +112,7 @@ export async function persistCreateTransaction(input: Omit<Transaction, "id" | "
     notes: input.notes ?? null,
   });
 
+  publishPersistenceEvent(userId, "transaction.changed");
   return toTransaction(created);
 }
 
@@ -129,12 +132,15 @@ export async function persistUpdateTransaction(id: string, patch: Partial<Transa
     ...(patch.notes !== undefined ? { notes: patch.notes ?? null } : {}),
   });
 
+  publishPersistenceEvent(userId, "transaction.changed");
   return toTransaction(updated);
 }
 
 export async function persistDeleteTransaction(id: string): Promise<boolean> {
   const userId = await requireUserId();
-  return deleteTransactionRecord(userId, id);
+  const deleted = await deleteTransactionRecord(userId, id);
+  if (deleted) publishPersistenceEvent(userId, "transaction.changed");
+  return deleted;
 }
 
 export async function persistCreateBudget(input: Omit<Budget, "id" | "createdAt" | "spent">): Promise<Budget> {
@@ -149,6 +155,7 @@ export async function persistCreateBudget(input: Omit<Budget, "id" | "createdAt"
     startDate: input.startDate,
   });
 
+  publishPersistenceEvent(userId, "budget.changed");
   return toBudget(created);
 }
 
@@ -165,12 +172,15 @@ export async function persistUpdateBudget(id: string, patch: Partial<Budget>): P
     ...(patch.startDate ? { startDate: patch.startDate } : {}),
   });
 
+  publishPersistenceEvent(userId, "budget.changed");
   return toBudget(updated);
 }
 
 export async function persistDeleteBudget(id: string): Promise<boolean> {
   const userId = await requireUserId();
-  return deleteBudgetRecord(userId, id);
+  const deleted = await deleteBudgetRecord(userId, id);
+  if (deleted) publishPersistenceEvent(userId, "budget.changed");
+  return deleted;
 }
 
 export async function persistCreateGoal(input: Omit<Goal, "id" | "createdAt">): Promise<Goal> {
@@ -184,6 +194,7 @@ export async function persistCreateGoal(input: Omit<Goal, "id" | "createdAt">): 
     status: input.status,
     note: input.note ?? null,
   });
+  publishPersistenceEvent(userId, "goal.changed");
   return toGoal(created);
 }
 
@@ -197,12 +208,15 @@ export async function persistUpdateGoal(id: string, patch: Partial<Goal>): Promi
     ...(patch.status ? { status: patch.status } : {}),
     ...(patch.note !== undefined ? { note: patch.note ?? null } : {}),
   });
+  publishPersistenceEvent(userId, "goal.changed");
   return toGoal(updated);
 }
 
 export async function persistDeleteGoal(id: string): Promise<boolean> {
   const userId = await requireUserId();
-  return deleteGoalRecord(userId, id);
+  const deleted = await deleteGoalRecord(userId, id);
+  if (deleted) publishPersistenceEvent(userId, "goal.changed");
+  return deleted;
 }
 
 export async function persistToggleNotification(id: string, currentlyRead: boolean) {
@@ -210,15 +224,19 @@ export async function persistToggleNotification(id: string, currentlyRead: boole
   const updated = currentlyRead
     ? await markNotificationUnread(userId, id)
     : await markNotificationRead(userId, id);
+  publishPersistenceEvent(userId, "notification.changed");
   return toNotification(updated);
 }
 
 export async function persistMarkAllNotificationsRead() {
   const userId = await requireUserId();
   await markAllNotificationsRead(userId);
+  publishPersistenceEvent(userId, "notification.changed");
 }
 
 export async function persistDeleteNotification(id: string): Promise<boolean> {
   const userId = await requireUserId();
-  return deleteNotificationRecord(userId, id);
+  const deleted = await deleteNotificationRecord(userId, id);
+  if (deleted) publishPersistenceEvent(userId, "notification.changed");
+  return deleted;
 }
