@@ -7,6 +7,12 @@
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
 export default defineConfig({
+  // Production builds target a persistent Node.js server: the app needs raw
+  // TCP for postgres-js and long-lived processes for SSE, which the default
+  // cloudflare-module preset cannot provide. Inside Lovable's own build
+  // sandbox this override is ignored (their preset pin wins), so the Lovable
+  // deploy path and local `vite dev` behavior are unchanged.
+  nitro: { preset: "node-server" },
   tanstackStart: {
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
     // nitro/vite builds from this
