@@ -33,3 +33,9 @@ export class DuplicateResourceError extends AppError {
     super(message, "DUPLICATE_RESOURCE", 409);
   }
 }
+
+export class TooManyRequestsError extends AppError {
+  constructor(message: string) {
+    super(message, "TOO_MANY_REQUESTS", 429);
+  }
+}

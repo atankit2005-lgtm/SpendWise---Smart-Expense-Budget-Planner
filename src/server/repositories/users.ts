@@ -29,6 +29,13 @@ export async function getUserByEmail(email: string): Promise<UserRecord | null> 
   return row[0] ?? null;
 }
 
+/** Transparent upgrade path for hashes created with older scrypt parameters. */
+export async function updateUserPasswordHash(userId: string, passwordHash: string): Promise<void> {
+  const currentUserId = resolveUserId(userId);
+
+  await db.update(users).set({ passwordHash }).where(eq(users.id, currentUserId));
+}
+
 export async function createUser(input: {
   id?: string;
   email: string;

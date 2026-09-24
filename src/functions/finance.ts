@@ -1,6 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import type { Budget, Goal, Transaction, User, UserPreferences } from "@/types";
 import type { FinanceSnapshot } from "@/server/mappers";
+import { ConfigurationError } from "@/server/env";
+import { withErrorBoundary } from "@/server/error-boundary";
 import {
   loadFinanceSnapshot,
   persistCreateBudget,
@@ -25,17 +27,30 @@ export interface FinanceSnapshotResponse {
 }
 
 export const getFinanceSnapshotFn = createServerFn({ method: "GET" }).handler(
-  async (): Promise<FinanceSnapshotResponse> => {
-    if (!persistenceAvailable()) throw new Error("Database persistence is not configured.");
-    return { snapshot: await loadFinanceSnapshot() };
-  },
+  (): Promise<FinanceSnapshotResponse> =>
+    withErrorBoundary(async () => {
+      requirePersistence();
+      return { snapshot: await loadFinanceSnapshot() };
+    }),
 );
 
-function withDatabase<T>(fn: () => Promise<T>): Promise<T> {
+/**
+ * Every persistence server function runs inside `withErrorBoundary`:
+ * AppError.statusCode becomes the HTTP status, ConfigurationError becomes a
+ * generic 503, and unexpected errors a generic 500 — details stay in the
+ * server log, never in the client response.
+ */
+function requirePersistence(): void {
   if (!persistenceAvailable()) {
-    throw new Error("Database persistence is not configured.");
+    throw new ConfigurationError("Database persistence is not configured.");
   }
-  return fn();
+}
+
+function withDatabase<T>(fn: () => Promise<T>): Promise<T> {
+  return withErrorBoundary(async () => {
+    requirePersistence();
+    return fn();
+  });
 }
 
 export const persistUserFn = createServerFn({ method: "POST" })
