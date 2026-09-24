@@ -12,10 +12,19 @@
  */
 
 import type { FinanceSnapshot } from "@/server/mappers";
-import type { AppNotification, Budget, Category, Goal, Transaction, User } from "@/types";
+import type {
+  AppNotification,
+  Budget,
+  Category,
+  Goal,
+  Transaction,
+  User,
+  UserPreferences,
+} from "@/types";
 
 export interface FinanceSnapshotState {
   user: User;
+  preferences: UserPreferences;
   categories: Category[];
   transactions: Transaction[];
   budgets: Budget[];
@@ -26,6 +35,7 @@ export interface FinanceSnapshotState {
 export function snapshotToState(snapshot: FinanceSnapshot): FinanceSnapshotState {
   return {
     user: snapshot.user,
+    preferences: snapshot.preferences,
     categories: snapshot.categories,
     transactions: snapshot.transactions,
     budgets: snapshot.budgets.map((budget) => ({ ...budget, spent: 0 })),

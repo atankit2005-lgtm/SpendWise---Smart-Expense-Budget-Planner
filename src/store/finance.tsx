@@ -10,7 +10,6 @@ import {
 import {
   budgets as seedBudgets,
   categories,
-  categoryName,
   currentUser,
   goals as seedGoals,
   notifications as seedNotifications,
@@ -33,11 +32,26 @@ import {
   type FinanceSummary,
 } from "@/lib/financial-engine";
 import { toast } from "sonner";
-import type { AIInsight, AppNotification, Budget, Category, Goal, Transaction, User } from "@/types";
+import {
+  defaultUserPreferences,
+  type AIInsight,
+  type AppNotification,
+  type Budget,
+  type Category,
+  type Goal,
+  type Transaction,
+  type User,
+  type UserPreferences,
+} from "@/types";
 import type { FinanceSnapshot } from "@/server/mappers";
 import { createRealtimeSync } from "@/lib/realtime/client";
 import { onSessionEnded } from "@/lib/realtime/session-signal";
 import { snapshotToState } from "./snapshot-state";
+import {
+  buildDerivedNotificationCandidates,
+  combineNotifications,
+  mergeDerivedNotifications,
+} from "./derived-notifications";
 import {
   getFinanceSnapshotFn,
   persistCreateBudgetFn,
@@ -48,6 +62,7 @@ import {
   persistDeleteNotificationFn,
   persistDeleteTransactionFn,
   persistMarkAllNotificationsReadFn,
+  persistPreferencesFn,
   persistToggleNotificationFn,
   persistUpdateBudgetFn,
   persistUpdateGoalFn,
@@ -91,6 +106,10 @@ export interface FinanceContextValue {
   insights: AIInsight[];
   summary: FinanceSummary;
   categories: Category[];
+
+  /** Persisted per-user preferences (user_settings). Loaded via the snapshot. */
+  preferences: UserPreferences;
+  updatePreferences: (patch: Partial<UserPreferences>) => void;
 
   /** SpendWise Intelligence (Stage 4) — deterministic, derived from the data above. */
   patterns: SpendingPattern[];
@@ -143,6 +162,14 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
   const [notifications, setNotifications] = useState<AppNotification[]>(initialState.notifications);
   const [categoryList, setCategoryList] = useState<Category[]>(categories);
+  const [preferences, setPreferences] = useState<UserPreferences>(defaultUserPreferences);
+  // Derived AI notifications live in their own lane so the snapshot refetch
+  // (which replaces persisted state wholesale) cannot wipe them, reset their
+  // read flags, or resurrect dismissed ones. See derived-notifications.ts.
+  const [derivedNotifications, setDerivedNotifications] = useState<AppNotification[]>([]);
+  const [dismissedDerivedIds, setDismissedDerivedIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   // Set only after the authenticated snapshot load succeeds, so it doubles as
   // "there is a valid session" — the gate for the realtime SSE connection.
   // Logged-out visitors (public pages) never load a snapshot and never
@@ -161,6 +188,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     setBudgets(state.budgets);
     setGoals(state.goals);
     setNotifications(state.notifications);
+    setPreferences(state.preferences);
     setAuthedUserId(state.user.id);
   }, []);
 
@@ -214,6 +242,20 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     if (persistenceMode === "database") {
       void persistUserFn({ data: patch }).catch(() => {
         toast.error("Could not save profile to the database.");
+      });
+    }
+  }, [persistenceMode]);
+
+  /* ---------------- PREFERENCES ---------------- */
+
+  const updatePreferences = useCallback((patch: Partial<UserPreferences>) => {
+    setPreferences((prev) => ({
+      ...prev,
+      ...patch,
+    }));
+    if (persistenceMode === "database") {
+      void persistPreferencesFn({ data: patch }).catch(() => {
+        toast.error("Could not save preference to the database.");
       });
     }
   }, [persistenceMode]);
@@ -414,6 +456,15 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   /* ---------------- NOTIFICATIONS ---------------- */
 
   const toggleNotificationRead = useCallback((id: string) => {
+    if (!isPersistedUuid(id)) {
+      setDerivedNotifications((prev) =>
+        prev.map((notification) =>
+          notification.id === id ? { ...notification, read: !notification.read } : notification,
+        ),
+      );
+      return;
+    }
+
     setNotifications((prev) =>
       prev.map((notification) =>
         notification.id === id
@@ -424,7 +475,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
           : notification,
       ),
     );
-    if (persistenceMode === "database" && isPersistedUuid(id)) {
+    if (persistenceMode === "database") {
       const current = notifications.find((notification) => notification.id === id);
       void persistToggleNotificationFn({
         data: { id, currentlyRead: current?.read ?? false },
@@ -435,6 +486,12 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   }, [notifications, persistenceMode]);
 
   const markAllRead = useCallback(() => {
+    setDerivedNotifications((prev) =>
+      prev.map((notification) => ({
+        ...notification,
+        read: true,
+      })),
+    );
     setNotifications((prev) =>
       prev.map((notification) => ({
         ...notification,
@@ -449,8 +506,16 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   }, [persistenceMode]);
 
   const deleteNotification = useCallback((id: string) => {
+    if (!isPersistedUuid(id)) {
+      // Dismissals are remembered by id, so a later recompute/refetch of the
+      // same underlying condition never resurrects a deleted derived alert.
+      setDerivedNotifications((prev) => prev.filter((notification) => notification.id !== id));
+      setDismissedDerivedIds((prev) => new Set(prev).add(id));
+      return;
+    }
+
     setNotifications((prev) => prev.filter((notification) => notification.id !== id));
-    if (persistenceMode === "database" && isPersistedUuid(id)) {
+    if (persistenceMode === "database") {
       void persistDeleteNotificationFn({ data: { id } }).catch(() => {
         toast.error("Could not delete notification in the database.");
       });
@@ -521,57 +586,30 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   // notification center. Every AI-generated notification has a stable,
   // deterministic id (derived from the underlying budget/anomaly id), so
   // re-running this effect after every recompute never creates duplicates —
-  // the state update itself is skipped whenever there's nothing new to add.
+  // the merge is skipped whenever there's nothing new to add, and dismissed
+  // ids never come back. Derived notifications live outside the persisted
+  // lane, so a snapshot refetch cannot wipe them or reset their read state.
   useEffect(() => {
-    const candidates: AppNotification[] = [];
-    const createdAt = new Date().toISOString();
-
-    intelligence.budgetRisks.forEach((risk) => {
-      if (risk.level === "critical") {
-        candidates.push({
-          id: `ai_budget_${risk.budgetId}_critical`,
-          type: "budget_exceeded",
-          title: `${categoryList.find((category) => category.id === risk.categoryId)?.name ?? categoryName(risk.categoryId)} budget exceeded`,
-          message: risk.explanation,
-          read: false,
-          createdAt,
-        });
-      } else if (risk.level === "high") {
-        candidates.push({
-          id: `ai_budget_${risk.budgetId}_high`,
-          type: "budget_warning",
-          title: `${categoryList.find((category) => category.id === risk.categoryId)?.name ?? categoryName(risk.categoryId)} budget at risk`,
-          message: risk.explanation,
-          read: false,
-          createdAt,
-        });
-      }
-    });
-
-    intelligence.anomalies.forEach((anomaly) => {
-      if (anomaly.severity === "high") {
-        candidates.push({
-          id: `ai_anomaly_${anomaly.id}`,
-          type: "unusual_transaction",
-          title: anomaly.title,
-          message: anomaly.explanation,
-          read: false,
-          createdAt,
-        });
-      }
-    });
+    const candidates = buildDerivedNotificationCandidates(
+      {
+        budgetRisks: intelligence.budgetRisks,
+        anomalies: intelligence.anomalies,
+        categories: categoryList,
+      },
+      new Date().toISOString(),
+    );
 
     if (candidates.length === 0) return;
 
-    setNotifications((prev) => {
-      const existingIds = new Set(prev.map((notification) => notification.id));
-      const fresh = candidates.filter((candidate) => !existingIds.has(candidate.id));
-      // Returning the same array reference (implicitly, by early return) when
-      // there's nothing new avoids an unnecessary state update/render.
-      if (fresh.length === 0) return prev;
-      return [...fresh, ...prev];
-    });
-  }, [intelligence, categoryList]);
+    setDerivedNotifications((prev) => mergeDerivedNotifications(prev, candidates, dismissedDerivedIds));
+  }, [intelligence, categoryList, dismissedDerivedIds]);
+
+  // Display list = derived AI alerts (own lane, survives refetch) followed by
+  // the persisted notifications exactly as the snapshot delivered them.
+  const allNotifications = useMemo(
+    () => combineNotifications(derivedNotifications, notifications),
+    [derivedNotifications, notifications],
+  );
 
   const value = useMemo<FinanceContextValue>(() => {
     return {
@@ -593,16 +631,19 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       updateGoal,
       deleteGoal,
 
-      notifications,
+      notifications: allNotifications,
       toggleNotificationRead,
       markAllRead,
       deleteNotification,
 
-      unreadCount: notifications.filter((notification) => !notification.read).length,
+      unreadCount: allNotifications.filter((notification) => !notification.read).length,
 
       insights: intelligence.insights,
       summary,
       categories: categoryList,
+
+      preferences,
+      updatePreferences,
 
       patterns: intelligence.patterns,
       anomalies: intelligence.anomalies,
@@ -630,7 +671,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     updateGoal,
     deleteGoal,
 
-    notifications,
+    allNotifications,
     toggleNotificationRead,
     markAllRead,
     deleteNotification,
@@ -638,6 +679,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     intelligence,
     summary,
     categoryList,
+    preferences,
+    updatePreferences,
   ]);
 
   return <FinanceContext.Provider value={value}>{children}</FinanceContext.Provider>;

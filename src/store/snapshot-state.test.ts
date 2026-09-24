@@ -19,6 +19,17 @@ function makeSnapshot(): FinanceSnapshot {
       memberSince: "2024-08-14",
       occupation: "Product Engineer",
     },
+    preferences: {
+      theme: "dark",
+      compact: true,
+      animations: true,
+      budgetAlerts: true,
+      weeklyDigest: true,
+      anomalyAlerts: false,
+      shareAnonymised: false,
+      hideAmounts: true,
+      twoFactor: false,
+    },
     categories: [
       { id: "cat-1", name: "Food & Dining", type: "expense", color: "var(--chart-1)", icon: "utensils" },
     ],
@@ -75,10 +86,23 @@ describe("snapshot → FinanceProvider base state (Stage 6.3)", () => {
     const state = snapshotToState(snapshot);
 
     assert.deepEqual(state.user, snapshot.user);
+    assert.deepEqual(state.preferences, snapshot.preferences);
     assert.deepEqual(state.categories, snapshot.categories);
     assert.deepEqual(state.transactions, snapshot.transactions);
     assert.deepEqual(state.goals, snapshot.goals);
     assert.deepEqual(state.notifications, snapshot.notifications);
+  });
+
+  it("returns the persisted preferences on every snapshot application (reload survival)", () => {
+    const snapshot = makeSnapshot();
+    const first = snapshotToState(snapshot);
+    const second = snapshotToState(snapshot);
+
+    assert.deepEqual(second.preferences, first.preferences);
+    assert.equal(second.preferences.compact, true);
+    assert.equal(second.preferences.weeklyDigest, true);
+    assert.equal(second.preferences.hideAmounts, true);
+    assert.equal(second.preferences.anomalyAlerts, false);
   });
 
   it("converges: applying the same snapshot twice yields identical state with each record exactly once", () => {

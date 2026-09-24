@@ -1,7 +1,8 @@
 import { eq } from "drizzle-orm";
 
 import { users } from "../../db/schema";
-import type { Budget, Goal, Transaction, User } from "@/types";
+import type { Budget, Goal, Transaction, User, UserPreferences } from "@/types";
+import { defaultUserPreferences } from "@/types";
 import { NotFoundError } from "./errors";
 import db, { isDatabaseConfigured } from "./db";
 import {
@@ -10,6 +11,7 @@ import {
   toDbPaymentMethod,
   toGoal,
   toNotification,
+  toPreferences,
   toTransaction,
   toUser,
   type FinanceSnapshot,
@@ -40,6 +42,7 @@ import {
   listTransactionsForUser,
   updateTransaction as updateTransactionRecord,
 } from "./repositories/transactions";
+import { getSettingsForUser, upsertSettings } from "./repositories/settings";
 import { getUserById } from "./repositories/users";
 import { requireSessionUserId } from "./authentication";
 import { publishPersistenceEvent } from "./realtime/publish";
@@ -51,23 +54,40 @@ export function persistenceAvailable(): boolean {
 export async function loadFinanceSnapshot(): Promise<FinanceSnapshot> {
   const userId = await requireSessionUserId();
 
-  const [user, categoryRows, transactionRows, budgetRows, goalRows, notificationRows] = await Promise.all([
-    getUserById(userId),
-    listCategoriesForUser(userId),
-    listTransactionsForUser(userId),
-    listBudgetsForUser(userId),
-    listGoalsForUser(userId),
-    listNotificationsForUser(userId),
-  ]);
+  const [user, preferences, categoryRows, transactionRows, budgetRows, goalRows, notificationRows] =
+    await Promise.all([
+      getUserById(userId),
+      loadPreferences(userId),
+      listCategoriesForUser(userId),
+      listTransactionsForUser(userId),
+      listBudgetsForUser(userId),
+      listGoalsForUser(userId),
+      listNotificationsForUser(userId),
+    ]);
 
   return {
     user: toUser(user),
+    preferences,
     categories: categoryRows.map(toCategory),
     transactions: transactionRows.map(toTransaction),
     budgets: budgetRows.map(toBudget),
     goals: goalRows.map(toGoal),
     notifications: notificationRows.map(toNotification),
   };
+}
+
+/**
+ * Settings rows are created at signup, but a missing row must never take the
+ * whole authenticated snapshot down — fall back to the same defaults a fresh
+ * signup would get.
+ */
+async function loadPreferences(userId: string): Promise<UserPreferences> {
+  try {
+    return toPreferences(await getSettingsForUser(userId));
+  } catch (error) {
+    if (error instanceof NotFoundError) return { ...defaultUserPreferences };
+    throw error;
+  }
 }
 
 async function requireUserId(): Promise<string> {
@@ -95,6 +115,34 @@ export async function persistUserPatch(patch: Partial<User>): Promise<User> {
   if (!updated) throw new NotFoundError("User not found.");
   publishPersistenceEvent(userId, "finance.snapshot.invalidated");
   return toUser(updated);
+}
+
+/**
+ * Persist a partial preferences patch through the existing user_settings
+ * upsert. Only the keys present in the patch are written; everything else
+ * keeps its stored value. Publishes the same snapshot-invalidation event as
+ * the user patch so the user's other tabs/sessions converge on the new
+ * settings through the normal snapshot refetch.
+ */
+export async function persistPreferencesPatch(
+  patch: Partial<UserPreferences>,
+): Promise<UserPreferences> {
+  const userId = await requireUserId();
+
+  const updated = await upsertSettings(userId, {
+    ...(patch.theme !== undefined ? { theme: patch.theme } : {}),
+    ...(patch.compact !== undefined ? { compactDensity: patch.compact } : {}),
+    ...(patch.animations !== undefined ? { animations: patch.animations } : {}),
+    ...(patch.budgetAlerts !== undefined ? { budgetAlerts: patch.budgetAlerts } : {}),
+    ...(patch.weeklyDigest !== undefined ? { weeklyDigest: patch.weeklyDigest } : {}),
+    ...(patch.anomalyAlerts !== undefined ? { anomalyAlerts: patch.anomalyAlerts } : {}),
+    ...(patch.shareAnonymised !== undefined ? { shareAnonymised: patch.shareAnonymised } : {}),
+    ...(patch.hideAmounts !== undefined ? { hideAmounts: patch.hideAmounts } : {}),
+    ...(patch.twoFactor !== undefined ? { twoFactorEnabled: patch.twoFactor } : {}),
+  });
+
+  publishPersistenceEvent(userId, "finance.snapshot.invalidated");
+  return toPreferences(updated);
 }
 
 export async function persistCreateTransaction(input: Omit<Transaction, "id" | "createdAt">): Promise<Transaction> {

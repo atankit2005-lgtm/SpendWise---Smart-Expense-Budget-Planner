@@ -1,8 +1,9 @@
-import type { AppNotification, Budget, Category, Goal, PaymentMethod, Transaction, User } from "@/types";
+import type { AppNotification, Budget, Category, Goal, PaymentMethod, Transaction, User, UserPreferences } from "@/types";
 import type { BudgetRecord } from "./repositories/budgets";
 import type { CategoryRecord } from "./repositories/categories";
 import type { GoalRecord } from "./repositories/goals";
 import type { NotificationRecord } from "./repositories/notifications";
+import type { UserSettingsRecord } from "./repositories/settings";
 import type { TransactionRecord } from "./repositories/transactions";
 import type { UserRecord } from "./repositories/users";
 
@@ -116,8 +117,23 @@ export function toNotification(row: NotificationRecord): AppNotification {
   };
 }
 
+export function toPreferences(row: UserSettingsRecord): UserPreferences {
+  return {
+    theme: row.theme,
+    compact: row.compactDensity,
+    animations: row.animations,
+    budgetAlerts: row.budgetAlerts,
+    weeklyDigest: row.weeklyDigest,
+    anomalyAlerts: row.anomalyAlerts,
+    shareAnonymised: row.shareAnonymised,
+    hideAmounts: row.hideAmounts,
+    twoFactor: row.twoFactorEnabled,
+  };
+}
+
 export interface FinanceSnapshot {
   user: User;
+  preferences: UserPreferences;
   categories: Category[];
   transactions: Transaction[];
   budgets: Budget[];

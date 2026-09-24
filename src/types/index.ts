@@ -14,6 +14,43 @@ export interface User {
   occupation: string;
 }
 
+/**
+ * Client-facing view of the persisted `user_settings` row. Field names match
+ * the settings UI; the mapper translates to/from the DB column names
+ * (compact↔compactDensity, twoFactor↔twoFactorEnabled). Persisted in
+ * PostgreSQL and delivered via the authenticated FinanceSnapshot — never in
+ * browser storage.
+ */
+export interface UserPreferences {
+  theme: string;
+  compact: boolean;
+  animations: boolean;
+  budgetAlerts: boolean;
+  weeklyDigest: boolean;
+  anomalyAlerts: boolean;
+  shareAnonymised: boolean;
+  hideAmounts: boolean;
+  twoFactor: boolean;
+}
+
+/**
+ * Mirrors the user_settings column defaults so the client can render the same
+ * values a fresh signup would before (or without) a snapshot. Lives here
+ * rather than in the server mappers because client code must not import
+ * src/server at runtime.
+ */
+export const defaultUserPreferences: UserPreferences = {
+  theme: "dark",
+  compact: false,
+  animations: true,
+  budgetAlerts: true,
+  weeklyDigest: false,
+  anomalyAlerts: true,
+  shareAnonymised: false,
+  hideAmounts: false,
+  twoFactor: false,
+};
+
 export interface Category {
   id: string;
   name: string;

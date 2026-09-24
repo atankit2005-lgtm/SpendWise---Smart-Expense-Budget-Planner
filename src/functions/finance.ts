@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import type { Budget, Goal, Transaction, User } from "@/types";
+import type { Budget, Goal, Transaction, User, UserPreferences } from "@/types";
 import type { FinanceSnapshot } from "@/server/mappers";
 import {
   loadFinanceSnapshot,
@@ -11,6 +11,7 @@ import {
   persistDeleteNotification,
   persistDeleteTransaction,
   persistMarkAllNotificationsRead,
+  persistPreferencesPatch,
   persistToggleNotification,
   persistUpdateBudget,
   persistUpdateGoal,
@@ -40,6 +41,10 @@ function withDatabase<T>(fn: () => Promise<T>): Promise<T> {
 export const persistUserFn = createServerFn({ method: "POST" })
   .validator((data: Partial<User>) => data)
   .handler(async ({ data }) => withDatabase(() => persistUserPatch(data)));
+
+export const persistPreferencesFn = createServerFn({ method: "POST" })
+  .validator((data: Partial<UserPreferences>) => data)
+  .handler(async ({ data }) => withDatabase(() => persistPreferencesPatch(data)));
 
 export const persistCreateTransactionFn = createServerFn({ method: "POST" })
   .validator((data: Omit<Transaction, "id" | "createdAt">) => data)

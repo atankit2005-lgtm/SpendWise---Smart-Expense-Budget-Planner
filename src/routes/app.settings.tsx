@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useFinance } from "@/store/finance";
+import type { UserPreferences } from "@/types";
 
 export const Route = createFileRoute("/app/settings")({
   head: () => ({
@@ -34,22 +35,19 @@ function Row({ title, description, children }: { title: string; description: str
   );
 }
 
-function SettingsPage() {
-  const { user, updateUser } = useFinance();
-  const [account, setAccount] = useState({ name: user.name, email: user.email });
-  const [prefs, setPrefs] = useState({
-    compact: false,
-    animations: true,
-    budgetAlerts: true,
-    weeklyDigest: true,
-    anomalyAlerts: true,
-    shareAnonymised: false,
-    hideAmounts: false,
-    twoFactor: false,
-  });
+/** Preference keys rendered as switches — every field except the theme. */
+type PreferenceToggle = {
+  [K in keyof UserPreferences]-?: UserPreferences[K] extends boolean ? K : never;
+}[keyof UserPreferences];
 
-  const toggle = (key: keyof typeof prefs) => (value: boolean) => {
-    setPrefs((p) => ({ ...p, [key]: value }));
+function SettingsPage() {
+  const { user, updateUser, preferences, updatePreferences } = useFinance();
+  const [account, setAccount] = useState({ name: user.name, email: user.email });
+
+  const toggle = (key: PreferenceToggle) => (value: boolean) => {
+    // Optimistic: the switch flips immediately; a failed persist surfaces an
+    // error toast and the next snapshot refetch restores the stored value.
+    updatePreferences({ [key]: value } as Partial<UserPreferences>);
     toast.success("Preference saved");
   };
 
@@ -95,10 +93,10 @@ function SettingsPage() {
               <span className="rounded-full border border-primary/40 px-3 py-1 text-xs text-primary">Dark</span>
             </Row>
             <Row title="Compact density" description="Reduce padding across tables and cards.">
-              <Switch checked={prefs.compact} onCheckedChange={toggle("compact")} aria-label="Compact density" />
+              <Switch checked={preferences.compact} onCheckedChange={toggle("compact")} aria-label="Compact density" />
             </Row>
             <Row title="Interface animations" description="Subtle transitions and chart animations.">
-              <Switch checked={prefs.animations} onCheckedChange={toggle("animations")} aria-label="Interface animations" />
+              <Switch checked={preferences.animations} onCheckedChange={toggle("animations")} aria-label="Interface animations" />
             </Row>
           </Panel>
         </TabsContent>
@@ -106,13 +104,13 @@ function SettingsPage() {
         <TabsContent value="notifications">
           <Panel title="Notification preferences" description="Choose what SpendWise alerts you about">
             <Row title="Budget alerts" description="Warn at 80% and when a limit is exceeded.">
-              <Switch checked={prefs.budgetAlerts} onCheckedChange={toggle("budgetAlerts")} aria-label="Budget alerts" />
+              <Switch checked={preferences.budgetAlerts} onCheckedChange={toggle("budgetAlerts")} aria-label="Budget alerts" />
             </Row>
             <Row title="Weekly digest" description="A summary of spending every Monday.">
-              <Switch checked={prefs.weeklyDigest} onCheckedChange={toggle("weeklyDigest")} aria-label="Weekly digest" />
+              <Switch checked={preferences.weeklyDigest} onCheckedChange={toggle("weeklyDigest")} aria-label="Weekly digest" />
             </Row>
             <Row title="Anomaly alerts" description="Flag transactions outside your usual pattern.">
-              <Switch checked={prefs.anomalyAlerts} onCheckedChange={toggle("anomalyAlerts")} aria-label="Anomaly alerts" />
+              <Switch checked={preferences.anomalyAlerts} onCheckedChange={toggle("anomalyAlerts")} aria-label="Anomaly alerts" />
             </Row>
           </Panel>
         </TabsContent>
@@ -120,10 +118,10 @@ function SettingsPage() {
         <TabsContent value="privacy">
           <Panel title="Privacy" description="Control how your data is used">
             <Row title="Share anonymised insights" description="Help improve SpendWise models with aggregated data.">
-              <Switch checked={prefs.shareAnonymised} onCheckedChange={toggle("shareAnonymised")} aria-label="Share anonymised insights" />
+              <Switch checked={preferences.shareAnonymised} onCheckedChange={toggle("shareAnonymised")} aria-label="Share anonymised insights" />
             </Row>
             <Row title="Hide amounts by default" description="Blur balances until you reveal them.">
-              <Switch checked={prefs.hideAmounts} onCheckedChange={toggle("hideAmounts")} aria-label="Hide amounts" />
+              <Switch checked={preferences.hideAmounts} onCheckedChange={toggle("hideAmounts")} aria-label="Hide amounts" />
             </Row>
             <Row title="Export data" description="Download a copy of your SpendWise records.">
               <Button variant="outline" size="sm" onClick={() => toast.success("Export queued — demo only")}>
@@ -136,7 +134,7 @@ function SettingsPage() {
         <TabsContent value="security">
           <Panel title="Security" description="Protect access to your account">
             <Row title="Two-factor authentication" description="Require a one-time code at login.">
-              <Switch checked={prefs.twoFactor} onCheckedChange={toggle("twoFactor")} aria-label="Two-factor authentication" />
+              <Switch checked={preferences.twoFactor} onCheckedChange={toggle("twoFactor")} aria-label="Two-factor authentication" />
             </Row>
             <Row title="Password" description="Last changed 3 months ago.">
               <Button variant="outline" size="sm" onClick={() => toast.success("Password reset link sent — demo only")}>
