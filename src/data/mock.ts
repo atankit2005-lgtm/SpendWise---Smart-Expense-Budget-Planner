@@ -4,7 +4,6 @@ import type {
   Budget,
   Category,
   Goal,
-  SeriesPoint,
   TimeRange,
   Transaction,
   User,
@@ -42,18 +41,6 @@ export function categoryName(id: string) {
 export function categoryColor(id: string) {
   return categories.find((c) => c.id === id)?.color ?? "var(--chart-2)";
 }
-
-/** Headline figures for the current month (kept consistent with transactions below). */
-export const accountSummary = {
-  balance: 42850,
-  income: 28500,
-  expenses: 18420,
-  savings: 10080,
-  balanceChange: 8.2,
-  incomeChange: 4.6,
-  expenseChange: -3.1,
-  savingsChange: 12.4,
-};
 
 const tx = (
   id: string,
@@ -148,40 +135,6 @@ export const spendingForecast = [
   { label: "Nov", actual: null, forecast: 20250 },
   { label: "Dec", actual: null, forecast: 23100 },
 ];
-
-const days = (n: number, base: number, spread: number): SeriesPoint[] =>
-  Array.from({ length: n }, (_, i) => {
-    const wave = Math.sin(i * 1.1) * spread + Math.cos(i * 0.6) * (spread * 0.6);
-    const d = new Date(2026, 8, 11 - (n - 1 - i));
-    return {
-      label: d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }),
-      spending: Math.max(120, Math.round(base + wave)),
-      income: Math.round(base * 1.5 + Math.cos(i * 0.9) * spread),
-    };
-  });
-
-const months = (labels: string[], spend: number[], income: number[]): SeriesPoint[] =>
-  labels.map((label, i) => ({ label, spending: spend[i]!, income: income[i]! }));
-
-export const analyticsSeries: Record<TimeRange, SeriesPoint[]> = {
-  "7d": days(7, 640, 340),
-  "30d": days(30, 610, 380),
-  "3m": months(
-    ["Jul W1", "Jul W3", "Aug W1", "Aug W3", "Sep W1", "Sep W2"],
-    [4900, 5400, 4300, 5100, 4700, 4320],
-    [7200, 6800, 7400, 6900, 7600, 7300],
-  ),
-  "6m": months(
-    ["Apr", "May", "Jun", "Jul", "Aug", "Sep"],
-    [17600, 19250, 18100, 20340, 19010, 18420],
-    [26400, 27100, 26800, 28200, 27600, 28500],
-  ),
-  "1y": months(
-    ["Oct", "Nov", "Dec", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep"],
-    [16800, 18200, 22400, 17100, 16500, 18900, 17600, 19250, 18100, 20340, 19010, 18420],
-    [24000, 24000, 26500, 25200, 25200, 26100, 26400, 27100, 26800, 28200, 27600, 28500],
-  ),
-};
 
 export const timeRangeLabels: Record<TimeRange, string> = {
   "7d": "7 Days",

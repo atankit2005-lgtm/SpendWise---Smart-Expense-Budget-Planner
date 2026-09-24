@@ -14,7 +14,7 @@ export function MetricCard({
 }: {
   label: string;
   value: string;
-  change?: number;
+  change?: number | undefined;
   hint?: string;
   accent?: boolean;
   icon?: ReactNode;

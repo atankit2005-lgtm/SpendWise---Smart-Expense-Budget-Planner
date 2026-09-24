@@ -18,7 +18,8 @@ import { AppShell } from "@/components/app/app-shell";
 import { ChartFrame, MetricCard, Panel, ProgressBar } from "@/components/app/ui-bits";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { analyticsSeries, categoryColor, categoryName, timeRangeLabels } from "@/data/mock";
+import { categoryColor, categoryName, timeRangeLabels } from "@/data/mock";
+import { computeAnalyticsSeries } from "@/lib/financial-engine";
 import { formatINR } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useFinance } from "@/store/finance";
@@ -56,7 +57,7 @@ const ranges: TimeRange[] = ["7d", "30d", "3m", "6m", "1y"];
 function AnalyticsPage() {
   const { transactions, patterns, anomalies, forecast } = useFinance();
   const [range, setRange] = useState<TimeRange>("6m");
-  const series = analyticsSeries[range];
+  const series = useMemo(() => computeAnalyticsSeries(transactions, range), [transactions, range]);
 
   const trendPatterns = useMemo(
     () => patterns.filter((p) => p.type === "increasing_trend" || p.type === "category_spike"),

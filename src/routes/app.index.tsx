@@ -9,6 +9,7 @@ import {
   TrendingDown,
   Wallet,
 } from "lucide-react";
+import { useMemo } from "react";
 import {
   Area,
   AreaChart,
@@ -28,7 +29,8 @@ import { ChartFrame, MetricCard, Panel, ProgressBar, budgetTone } from "@/compon
 import { EmptyState } from "@/components/common/state-views";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { analyticsSeries, categoryColor, categoryName } from "@/data/mock";
+import { categoryColor, categoryName } from "@/data/mock";
+import { computeAnalyticsSeries } from "@/lib/financial-engine";
 import { formatDate, formatINR } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useFinance } from "@/store/finance";
@@ -64,7 +66,7 @@ function healthBadgeTone(grade: string) {
 
 function DashboardPage() {
   const { summary, transactions, budgets, insights, healthScore, recommendations } = useFinance();
-  const series = analyticsSeries["6m"];
+  const series = useMemo(() => computeAnalyticsSeries(transactions, "6m"), [transactions]);
   const topRecommendation = recommendations[0];
 
   const expenseByCategory = transactions

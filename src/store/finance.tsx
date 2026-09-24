@@ -8,7 +8,6 @@ import {
   type ReactNode,
 } from "react";
 import {
-  accountSummary,
   budgets as seedBudgets,
   categories,
   categoryName,
@@ -29,11 +28,9 @@ import {
   type SpendingPattern,
 } from "@/lib/ai";
 import {
-  computeBalanceDelta,
   computeBudgetSpendingMap,
-  computeSavings,
-  sumExpensesForRange,
-  sumIncomeForRange,
+  computeFinanceSummary,
+  type FinanceSummary,
 } from "@/lib/financial-engine";
 import { toast } from "sonner";
 import type { AIInsight, AppNotification, Budget, Category, Goal, Transaction, User } from "@/types";
@@ -92,7 +89,7 @@ export interface FinanceContextValue {
 
   unreadCount: number;
   insights: AIInsight[];
-  summary: typeof accountSummary;
+  summary: FinanceSummary;
   categories: Category[];
 
   /** SpendWise Intelligence (Stage 4) — deterministic, derived from the data above. */
@@ -470,44 +467,11 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     }));
   }, [budgets, transactions]);
 
-  const summary = useMemo(() => {
-    const formatDateValue = (date: Date) => {
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, "0");
-      const day = String(date.getDate()).padStart(2, "0");
-      return `${year}-${month}-${day}`;
-    };
-
-    const currentMonthStart = new Date();
-    currentMonthStart.setDate(1);
-    currentMonthStart.setHours(0, 0, 0, 0);
-
-    const currentMonthEnd = new Date(
-      currentMonthStart.getFullYear(),
-      currentMonthStart.getMonth() + 1,
-      0,
-    );
-
-    const monthStart = formatDateValue(currentMonthStart);
-    const monthEnd = formatDateValue(currentMonthEnd);
-
-    const calculatedIncome = sumIncomeForRange(transactions, monthStart, monthEnd);
-    const calculatedExpenses = sumExpensesForRange(transactions, monthStart, monthEnd);
-    const calculatedSavings = computeSavings(calculatedIncome, calculatedExpenses);
-
-    const calculatedBalance =
-      accountSummary.balance +
-      computeBalanceDelta(calculatedIncome, calculatedExpenses) -
-      computeBalanceDelta(accountSummary.income, accountSummary.expenses);
-
-    return {
-      ...accountSummary,
-      income: calculatedIncome,
-      expenses: calculatedExpenses,
-      savings: calculatedSavings,
-      balance: calculatedBalance,
-    };
-  }, [transactions]);
+  // Headline figures derived entirely from the authenticated user's real
+  // transactions — no mock anchor. balance = lifetime income - expenses;
+  // income/expenses/savings cover the current calendar month. See
+  // computeFinanceSummary for the exact domain semantics.
+  const summary = useMemo(() => computeFinanceSummary(transactions), [transactions]);
 
   /* ---------------- SPENDWISE INTELLIGENCE (STAGE 4) ---------------- */
   // Always a pure derivation of the transactions/budgets/goals above — no

@@ -1,4 +1,4 @@
-import type { Budget, BudgetPeriod, Transaction } from "../types";
+import type { Budget, BudgetPeriod, SeriesPoint, TimeRange, Transaction } from "../types";
 
 export type CashFlowGrouping = "day" | "week" | "month" | "year";
 
@@ -241,4 +241,153 @@ export function computeCashFlowSeries(
       net: entry.income - entry.expenses,
     }))
     .sort((left, right) => left.label.localeCompare(right.label));
+}
+
+const MONTH_LABELS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+const ANALYTICS_RANGE_SPECS: Record<TimeRange, { count: number; unit: "day" | "month" }> = {
+  "7d": { count: 7, unit: "day" },
+  "30d": { count: 30, unit: "day" },
+  "3m": { count: 3, unit: "month" },
+  "6m": { count: 6, unit: "month" },
+  "1y": { count: 12, unit: "month" },
+};
+
+const DAY_MS = 86_400_000;
+
+/**
+ * Zero-filled income/spending series for a fixed window of day- or
+ * month-sized buckets ending at the reference date (inclusive). Buckets
+ * without transactions are kept at zero so charts always render a stable,
+ * continuous axis derived purely from the given transactions.
+ */
+export function computeAnalyticsSeries(
+  transactions: Transaction[],
+  range: TimeRange,
+  referenceDate: Date = new Date(),
+): SeriesPoint[] {
+  const spec = ANALYTICS_RANGE_SPECS[range];
+  const refDayUTC = Date.UTC(
+    referenceDate.getUTCFullYear(),
+    referenceDate.getUTCMonth(),
+    referenceDate.getUTCDate(),
+  );
+
+  const buckets: Array<{ key: string; label: string; income: number; spending: number }> = [];
+  for (let offset = spec.count - 1; offset >= 0; offset -= 1) {
+    if (spec.unit === "day") {
+      const day = new Date(refDayUTC - offset * DAY_MS);
+      buckets.push({
+        key: formatDateUTC(day),
+        label: `${String(day.getUTCDate()).padStart(2, "0")} ${MONTH_LABELS[day.getUTCMonth()]!}`,
+        income: 0,
+        spending: 0,
+      });
+    } else {
+      const month = new Date(
+        Date.UTC(referenceDate.getUTCFullYear(), referenceDate.getUTCMonth() - offset, 1),
+      );
+      buckets.push({
+        key: formatDateUTC(month).slice(0, 7),
+        label: MONTH_LABELS[month.getUTCMonth()]!,
+        income: 0,
+        spending: 0,
+      });
+    }
+  }
+
+  const byKey = new Map(buckets.map((bucket) => [bucket.key, bucket]));
+  for (const transaction of transactions) {
+    const normalized = normalizeDate(transaction.date);
+    if (!normalized) continue;
+    const bucket = byKey.get(spec.unit === "day" ? normalized : normalized.slice(0, 7));
+    if (!bucket) continue;
+    if (transaction.type === "income") bucket.income += transaction.amount;
+    if (transaction.type === "expense") bucket.spending += transaction.amount;
+  }
+
+  return buckets.map(({ label, income, spending }) => ({ label, income, spending }));
+}
+
+export interface FinanceSummary {
+  balance: number;
+  income: number;
+  expenses: number;
+  savings: number;
+  balanceChange: number | undefined;
+  incomeChange: number | undefined;
+  expenseChange: number | undefined;
+  savingsChange: number | undefined;
+}
+
+/**
+ * Percentage change between two periods, rounded to one decimal. Returns
+ * undefined when the previous period is zero, because a percentage change
+ * from zero is not meaningful (the UI hides the badge in that case).
+ */
+function percentChange(current: number, previous: number): number | undefined {
+  if (previous === 0) return undefined;
+  return Math.round(((current - previous) / Math.abs(previous)) * 1000) / 10;
+}
+
+/**
+ * Headline figures derived entirely from persisted transactions:
+ * income/expenses/savings cover the calendar month of the reference date,
+ * while balance keeps the domain meaning "income - expenses" applied over
+ * the full transaction history (lifetime net). Change fields compare the
+ * current month with the previous one (balance compares lifetime net at
+ * both month boundaries).
+ */
+export function computeFinanceSummary(
+  transactions: Transaction[],
+  referenceDate: Date = new Date(),
+): FinanceSummary {
+  const year = referenceDate.getUTCFullYear();
+  const month = referenceDate.getUTCMonth();
+
+  const currentStart = formatDateUTC(new Date(Date.UTC(year, month, 1)));
+  const currentEnd = formatDateUTC(new Date(Date.UTC(year, month + 1, 0)));
+  const previousStart = formatDateUTC(new Date(Date.UTC(year, month - 1, 1)));
+  const previousEnd = formatDateUTC(new Date(Date.UTC(year, month, 0)));
+
+  const income = sumIncomeForRange(transactions, currentStart, currentEnd);
+  const expenses = sumExpensesForRange(transactions, currentStart, currentEnd);
+  const savings = computeSavings(income, expenses);
+
+  const previousIncome = sumIncomeForRange(transactions, previousStart, previousEnd);
+  const previousExpenses = sumExpensesForRange(transactions, previousStart, previousEnd);
+  const previousSavings = computeSavings(previousIncome, previousExpenses);
+
+  const balance = computeBalanceDelta(
+    sumIncomeForRange(transactions),
+    sumExpensesForRange(transactions),
+  );
+  const balanceAtPreviousEnd = computeBalanceDelta(
+    sumIncomeForRange(transactions, undefined, previousEnd),
+    sumExpensesForRange(transactions, undefined, previousEnd),
+  );
+
+  return {
+    balance,
+    income,
+    expenses,
+    savings,
+    balanceChange: percentChange(balance, balanceAtPreviousEnd),
+    incomeChange: percentChange(income, previousIncome),
+    expenseChange: percentChange(expenses, previousExpenses),
+    savingsChange: percentChange(savings, previousSavings),
+  };
 }
