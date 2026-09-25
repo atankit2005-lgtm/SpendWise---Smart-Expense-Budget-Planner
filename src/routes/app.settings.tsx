@@ -52,10 +52,11 @@ function SettingsPage() {
   const [exportLoading, setExportLoading] = useState(false);
 
   const toggle = (key: PreferenceToggle) => (value: boolean) => {
-    // Optimistic: the switch flips immediately; a failed persist surfaces an
-    // error toast and the next snapshot refetch restores the stored value.
-    updatePreferences({ [key]: value } as Partial<UserPreferences>);
-    toast.success("Preference saved");
+    void updatePreferences({ [key]: value } as Partial<UserPreferences>)
+      .then(() => toast.success("Preference saved"))
+      .catch((error) => {
+        toast.error(error instanceof Error ? error.message : "Could not save preference.");
+      });
   };
 
   async function changePassword(event: React.FormEvent) {
@@ -131,10 +132,14 @@ function SettingsPage() {
           <Panel title="Profile information" description="Shown across the app">
             <form
               className="space-y-4"
-              onSubmit={(e) => {
+              onSubmit={async (e) => {
                 e.preventDefault();
-                updateUser({ name: account.name, email: account.email });
-                toast.success("Account details saved");
+                try {
+                  await updateUser({ name: account.name, email: account.email });
+                  toast.success("Account details saved");
+                } catch (error) {
+                  toast.error(error instanceof Error ? error.message : "Could not save account details.");
+                }
               }}
             >
               <div className="grid gap-4 sm:grid-cols-2">

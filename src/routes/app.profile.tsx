@@ -32,32 +32,40 @@ export const Route = createFileRoute("/app/profile")({
 function ProfilePage() {
   const { user, updateUser, transactions, goals, summary } = useFinance();
   const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ ...user });
   const [errors, setErrors] = useState<Partial<Record<"name" | "email", string>>>({});
 
-  function submit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
     const next: typeof errors = {};
     if (form.name.trim().length < 2) next.name = "Enter your full name.";
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email)) next.email = "Enter a valid email address.";
     setErrors(next);
     if (Object.keys(next).length) return;
-    updateUser({
-      name: form.name.trim(),
-      email: form.email.trim(),
-      phone: form.phone,
-      location: form.location,
-      occupation: form.occupation,
-      avatarInitials: form.name
-        .trim()
-        .split(" ")
-        .map((p) => p[0])
-        .slice(0, 2)
-        .join("")
-        .toUpperCase(),
-    });
-    toast.success("Profile updated");
-    setOpen(false);
+    setSaving(true);
+    try {
+      await updateUser({
+        name: form.name.trim(),
+        email: form.email.trim(),
+        phone: form.phone,
+        location: form.location,
+        occupation: form.occupation,
+        avatarInitials: form.name
+          .trim()
+          .split(" ")
+          .map((p) => p[0])
+          .slice(0, 2)
+          .join("")
+          .toUpperCase(),
+      });
+      toast.success("Profile updated");
+      setOpen(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not update profile.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   const rows: [string, string][] = [
@@ -143,7 +151,9 @@ function ProfilePage() {
               <Button type="button" variant="outline" onClick={() => setOpen(false)}>
                 Cancel
               </Button>
-              <Button type="submit">Save changes</Button>
+              <Button type="submit" disabled={saving}>
+                {saving ? "Saving…" : "Save changes"}
+              </Button>
             </DialogFooter>
           </form>
         </DialogContent>

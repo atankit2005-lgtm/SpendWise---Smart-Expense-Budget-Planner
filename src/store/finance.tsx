@@ -69,6 +69,7 @@ import {
   type FinanceLoadStatus,
 } from "./finance-load";
 import { createFinanceSnapshotRequestGuard } from "./finance-request-guard";
+import { applyPersistedUpdate } from "./settings-persistence";
 
 function uid(prefix: string) {
   return `${prefix}_${Math.random().toString(36).slice(2, 9)}`;
@@ -80,7 +81,7 @@ function isPersistedUuid(id: string) {
 
 export interface FinanceContextValue {
   user: User;
-  updateUser: (patch: Partial<User>) => void;
+  updateUser: (patch: Partial<User>) => Promise<void>;
 
   transactions: Transaction[];
   addTransaction: (input: Omit<Transaction, "id" | "createdAt">) => void;
@@ -109,7 +110,7 @@ export interface FinanceContextValue {
 
   /** Persisted per-user preferences (user_settings). Loaded via the snapshot. */
   preferences: UserPreferences;
-  updatePreferences: (patch: Partial<UserPreferences>) => void;
+  updatePreferences: (patch: Partial<UserPreferences>) => Promise<void>;
 
   /** SpendWise Intelligence (Stage 4) — deterministic, derived from the data above. */
   patterns: SpendingPattern[];
@@ -272,31 +273,37 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
   /* ---------------- USER ---------------- */
 
-  const updateUser = useCallback((patch: Partial<User>) => {
-    setUser((prev) => ({
-      ...prev,
-      ...patch,
-    }));
-    if (persistenceMode === "database") {
-      void persistUserFn({ data: patch }).catch(() => {
-        toast.error("Could not save profile to the database.");
-      });
+  const updateUser = useCallback(async (patch: Partial<User>) => {
+    const previous = user;
+    if (persistenceMode !== "database") {
+      setUser({ ...previous, ...patch });
+      return;
     }
-  }, [persistenceMode]);
+
+    await applyPersistedUpdate(
+      previous,
+      { ...previous, ...patch },
+      () => persistUserFn({ data: patch }),
+      setUser,
+    );
+  }, [persistenceMode, user]);
 
   /* ---------------- PREFERENCES ---------------- */
 
-  const updatePreferences = useCallback((patch: Partial<UserPreferences>) => {
-    setPreferences((prev) => ({
-      ...prev,
-      ...patch,
-    }));
-    if (persistenceMode === "database") {
-      void persistPreferencesFn({ data: patch }).catch(() => {
-        toast.error("Could not save preference to the database.");
-      });
+  const updatePreferences = useCallback(async (patch: Partial<UserPreferences>) => {
+    const previous = preferences;
+    if (persistenceMode !== "database") {
+      setPreferences({ ...previous, ...patch });
+      return;
     }
-  }, [persistenceMode]);
+
+    await applyPersistedUpdate(
+      previous,
+      { ...previous, ...patch },
+      () => persistPreferencesFn({ data: patch }),
+      setPreferences,
+    );
+  }, [persistenceMode, preferences]);
 
   /* ---------------- TRANSACTIONS ---------------- */
 
