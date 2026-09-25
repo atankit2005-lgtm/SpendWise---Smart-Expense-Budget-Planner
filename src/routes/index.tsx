@@ -290,8 +290,8 @@ function LandingPage() {
           <div>
             <BrandMark />
             <p className="mt-2 max-w-xs text-xs text-muted-foreground">
-              An AI-powered personal finance platform. Stage 1 demo with mock data — no real accounts are
-              connected.
+              An AI-powered personal finance platform with secure authentication, PostgreSQL persistence,
+              realtime synchronization, and financial intelligence.
             </p>
           </div>
           <nav aria-label="Footer" className="flex flex-wrap gap-6 text-sm text-muted-foreground">
