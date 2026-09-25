@@ -2,9 +2,11 @@ import { createServerFn } from "@tanstack/react-start";
 import { toUser } from "@/server/mappers";
 import {
   enforceAuthRateLimit,
+  changeCurrentUserPassword,
   getCurrentSessionUser,
   logIn,
   logOut,
+  signOutOtherSessions,
   signUp,
 } from "@/server/authentication";
 import { withErrorBoundary } from "@/server/error-boundary";
@@ -34,6 +36,22 @@ export const loginFn = createServerFn({ method: "POST" })
 export const logoutFn = createServerFn({ method: "POST" }).handler(() =>
   withErrorBoundary(async () => {
     await logOut();
+  }),
+);
+
+export const changePasswordFn = createServerFn({ method: "POST" })
+  .validator((data: { currentPassword: string; newPassword: string }) => data)
+  .handler(({ data }) =>
+    withErrorBoundary(async () => {
+      await changeCurrentUserPassword(data);
+      return { ok: true };
+    }),
+  );
+
+export const signOutOtherSessionsFn = createServerFn({ method: "POST" }).handler(() =>
+  withErrorBoundary(async () => {
+    await signOutOtherSessions();
+    return { ok: true };
   }),
 );
 

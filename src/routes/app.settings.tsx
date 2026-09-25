@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { changePasswordFn, signOutOtherSessionsFn } from "@/functions/auth";
 import { useFinance } from "@/store/finance";
 import type { UserPreferences } from "@/types";
 
@@ -43,6 +44,10 @@ type PreferenceToggle = {
 function SettingsPage() {
   const { user, updateUser, preferences, updatePreferences } = useFinance();
   const [account, setAccount] = useState({ name: user.name, email: user.email });
+  const [passwords, setPasswords] = useState({ current: "", next: "", confirm: "" });
+  const [passwordError, setPasswordError] = useState("");
+  const [passwordLoading, setPasswordLoading] = useState(false);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
 
   const toggle = (key: PreferenceToggle) => (value: boolean) => {
     // Optimistic: the switch flips immediately; a failed persist surfaces an
@@ -50,6 +55,43 @@ function SettingsPage() {
     updatePreferences({ [key]: value } as Partial<UserPreferences>);
     toast.success("Preference saved");
   };
+
+  async function changePassword(event: React.FormEvent) {
+    event.preventDefault();
+    setPasswordError("");
+    if (passwords.next.length < 8) {
+      setPasswordError("New password must be at least 8 characters.");
+      return;
+    }
+    if (passwords.next !== passwords.confirm) {
+      setPasswordError("New passwords do not match.");
+      return;
+    }
+    setPasswordLoading(true);
+    try {
+      await changePasswordFn({
+        data: { currentPassword: passwords.current, newPassword: passwords.next },
+      });
+      setPasswords({ current: "", next: "", confirm: "" });
+      toast.success("Password changed");
+    } catch (error) {
+      setPasswordError(error instanceof Error ? error.message : "Could not change password.");
+    } finally {
+      setPasswordLoading(false);
+    }
+  }
+
+  async function signOutOthers() {
+    setSessionsLoading(true);
+    try {
+      await signOutOtherSessionsFn();
+      toast.success("Other sessions signed out");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not sign out other sessions.");
+    } finally {
+      setSessionsLoading(false);
+    }
+  }
 
   return (
     <AppShell title="Settings" description="Preferences for your SpendWise workspace">
@@ -136,14 +178,24 @@ function SettingsPage() {
             <Row title="Two-factor authentication" description="Require a one-time code at login.">
               <Switch checked={preferences.twoFactor} onCheckedChange={toggle("twoFactor")} aria-label="Two-factor authentication" />
             </Row>
-            <Row title="Password" description="Last changed 3 months ago.">
-              <Button variant="outline" size="sm" onClick={() => toast.success("Password reset link sent — demo only")}>
-                Change password
+            <form className="space-y-4 border-b border-border py-4" onSubmit={changePassword}>
+              <div>
+                <p className="text-sm font-medium">Change password</p>
+                <p className="text-xs text-muted-foreground">Use your current password to choose a new one.</p>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-3">
+                <Input type="password" autoComplete="current-password" placeholder="Current password" value={passwords.current} onChange={(e) => setPasswords((p) => ({ ...p, current: e.target.value }))} />
+                <Input type="password" autoComplete="new-password" placeholder="New password" value={passwords.next} onChange={(e) => setPasswords((p) => ({ ...p, next: e.target.value }))} />
+                <Input type="password" autoComplete="new-password" placeholder="Confirm new password" value={passwords.confirm} onChange={(e) => setPasswords((p) => ({ ...p, confirm: e.target.value }))} />
+              </div>
+              {passwordError ? <p className="text-xs text-destructive">{passwordError}</p> : null}
+              <Button type="submit" variant="outline" size="sm" disabled={passwordLoading}>
+                {passwordLoading ? "Changing…" : "Change password"}
               </Button>
-            </Row>
+            </form>
             <Row title="Active sessions" description="You are signed in on 2 devices.">
-              <Button variant="outline" size="sm" onClick={() => toast.success("Other sessions signed out — demo only")}>
-                Sign out others
+              <Button variant="outline" size="sm" onClick={signOutOthers} disabled={sessionsLoading}>
+                {sessionsLoading ? "Signing out…" : "Sign out others"}
               </Button>
             </Row>
           </Panel>

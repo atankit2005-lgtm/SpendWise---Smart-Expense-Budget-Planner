@@ -18,6 +18,7 @@ const control = {
   users: new Map<string, { id: string; email: string; name: string; passwordHash: string | null }>(),
   sessions: [] as string[],
   rehashed: [] as Array<{ userId: string; passwordHash: string }>,
+  revokedOtherSessions: [] as string[],
   verifyCalls: [] as Array<{ password: string; encoded: string | null }>,
   nextUserId: 1,
 };
@@ -62,6 +63,9 @@ mock.module("./session", {
       control.sessions.push(userId);
     },
     destroyCurrentSession: async () => {},
+    destroyOtherSessions: async (userId: string) => {
+      control.revokedOtherSessions.push(userId);
+    },
     getSessionUserId: async () => control.sessions[0] ?? null,
   },
 });
@@ -97,7 +101,13 @@ mock.module("./repositories/users", {
   },
 });
 
-const { enforceAuthRateLimit, logIn, signUp } = await import("./authentication");
+const {
+  changeCurrentUserPassword,
+  enforceAuthRateLimit,
+  logIn,
+  signOutOtherSessions,
+  signUp,
+} = await import("./authentication");
 const { resetRateLimitState, listRateLimitKeys } = await import("./rate-limit");
 const { ConfigurationError } = await import("./env");
 const { TooManyRequestsError, UnauthorizedError, ValidationError } = await import("./errors");
@@ -112,12 +122,84 @@ function seedUser(email: string, password: string, legacy = false): void {
   });
 }
 
+describe("authenticated account operations (Stage 9.3A)", () => {
+  it("rejects password changes without an authenticated session", async () => {
+    await assert.rejects(
+      () =>
+        changeCurrentUserPassword({
+          currentPassword: "correct horse battery",
+          newPassword: "new correct password",
+        }),
+      UnauthorizedError,
+    );
+  });
+
+  it("verifies and hashes a new password without revoking the current session", async () => {
+    seedUser("owner@example.com", "correct horse battery");
+    control.sessions = ["user-1"];
+
+    await changeCurrentUserPassword({
+      currentPassword: "correct horse battery",
+      newPassword: "new correct password",
+    });
+
+    assert.equal(control.rehashed.length, 1);
+    assert.equal(control.rehashed[0]!.userId, "user-1");
+    assert.equal(control.rehashed[0]!.passwordHash, "current:new correct password");
+    assert.deepEqual(control.sessions, ["user-1"]);
+    assert.deepEqual(control.revokedOtherSessions, []);
+  });
+
+  it("rejects an incorrect current password and never persists the replacement", async () => {
+    seedUser("owner@example.com", "correct horse battery");
+    control.sessions = ["user-1"];
+
+    await assert.rejects(
+      () =>
+        changeCurrentUserPassword({
+          currentPassword: "wrong password",
+          newPassword: "new correct password",
+        }),
+      (error: unknown) =>
+        error instanceof UnauthorizedError &&
+        !(error as Error).message.includes("wrong password") &&
+        !(error as Error).message.includes("new correct password"),
+    );
+    assert.equal(control.rehashed.length, 0);
+  });
+
+  it("validates the replacement password before updating it", async () => {
+    seedUser("owner@example.com", "correct horse battery");
+    control.sessions = ["user-1"];
+
+    await assert.rejects(
+      () =>
+        changeCurrentUserPassword({
+          currentPassword: "correct horse battery",
+          newPassword: "short",
+        }),
+      ValidationError,
+    );
+    assert.equal(control.rehashed.length, 0);
+  });
+
+  it("revokes only other sessions for the authenticated user", async () => {
+    control.sessions = ["user-1"];
+
+    await signOutOtherSessions();
+
+    assert.deepEqual(control.revokedOtherSessions, ["user-1"]);
+    assert.deepEqual(control.sessions, ["user-1"]);
+  });
+});
+
 beforeEach(() => {
   control.databaseConfigured = true;
   control.ip = "203.0.113.7";
   control.users.clear();
   control.sessions = [];
   control.rehashed = [];
+  control.revokedOtherSessions = [];
   control.verifyCalls = [];
   control.nextUserId = 1;
   resetRateLimitState();

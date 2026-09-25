@@ -11,7 +11,7 @@ import {
 } from "./errors";
 import { hashPassword, needsRehash, verifyPassword } from "./password";
 import { consumeRateLimit } from "./rate-limit";
-import { createSession, destroyCurrentSession, getSessionUserId } from "./session";
+import { createSession, destroyCurrentSession, destroyOtherSessions, getSessionUserId } from "./session";
 import {
   createUser,
   getUserByEmail,
@@ -88,6 +88,10 @@ export function enforceAuthRateLimit(action: "login" | "signup", rawEmail: strin
 
 function validateCredentials(email: string, password: string): void {
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new ValidationError("Enter a valid email address.");
+  validatePassword(password);
+}
+
+function validatePassword(password: string): void {
   if (password.length < 8) throw new ValidationError("Password must be at least 8 characters.");
 }
 
@@ -172,6 +176,29 @@ export async function logIn(input: { email: string; password: string }): Promise
 export async function logOut(): Promise<void> {
   if (!isDatabaseConfigured()) return;
   await destroyCurrentSession();
+}
+
+export async function changeCurrentUserPassword(input: {
+  currentPassword: string;
+  newPassword: string;
+}): Promise<void> {
+  requireDatabase();
+  const userId = await requireSessionUserId();
+  validatePassword(input.currentPassword);
+  validatePassword(input.newPassword);
+
+  const user = await getUserById(userId);
+  if (!(await verifyPassword(input.currentPassword, user.passwordHash))) {
+    throw new UnauthorizedError("Current password is incorrect.");
+  }
+
+  await updateUserPasswordHash(userId, await hashPassword(input.newPassword));
+}
+
+export async function signOutOtherSessions(): Promise<void> {
+  requireDatabase();
+  const userId = await requireSessionUserId();
+  await destroyOtherSessions(userId);
 }
 
 export async function getCurrentSessionUser(): Promise<UserRecord | null> {
