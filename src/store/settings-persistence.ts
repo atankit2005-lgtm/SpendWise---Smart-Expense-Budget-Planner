@@ -1,14 +1,14 @@
 export async function applyPersistedUpdate<T>(
   previous: T,
-  optimistic: T,
   persist: () => Promise<T>,
   commit: (value: T) => void,
+  isCurrent: () => boolean = () => true,
 ): Promise<void> {
-  commit(optimistic);
   try {
-    commit(await persist());
+    const confirmed = await persist();
+    if (isCurrent()) commit(confirmed);
   } catch (error) {
-    commit(previous);
+    if (isCurrent()) commit(previous);
     throw error;
   }
 }

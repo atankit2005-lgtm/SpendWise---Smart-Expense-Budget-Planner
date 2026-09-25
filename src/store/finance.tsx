@@ -152,6 +152,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const [financeStatus, setFinanceStatus] = useState<FinanceLoadStatus>("loading");
   const [loadGeneration, setLoadGeneration] = useState(0);
   const snapshotRequestGuard = useRef(createFinanceSnapshotRequestGuard());
+  const preferencesRequestGeneration = useRef(0);
   // Derived AI notifications live in their own lane so the snapshot refetch
   // (which replaces persisted state wholesale) cannot wipe them, reset their
   // read flags, or resurrect dismissed ones. See derived-notifications.ts.
@@ -282,7 +283,6 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
     await applyPersistedUpdate(
       previous,
-      { ...previous, ...patch },
       () => persistUserFn({ data: patch }),
       setUser,
     );
@@ -297,11 +297,13 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    const requestGeneration = preferencesRequestGeneration.current + 1;
+    preferencesRequestGeneration.current = requestGeneration;
     await applyPersistedUpdate(
       previous,
-      { ...previous, ...patch },
       () => persistPreferencesFn({ data: patch }),
       setPreferences,
+      () => preferencesRequestGeneration.current === requestGeneration,
     );
   }, [persistenceMode, preferences]);
 
