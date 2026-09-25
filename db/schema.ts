@@ -1,10 +1,12 @@
 import { sql } from "drizzle-orm";
 import {
   boolean,
+  bigint,
   char,
   check,
   customType,
   date,
+  integer,
   index,
   jsonb,
   numeric,
@@ -94,6 +96,80 @@ export const passwordResetTokens = pgTable(
     userExpiresIdx: index("password_reset_tokens_user_expires_at_idx").on(
       table.userId,
       table.expiresAt,
+    ),
+  }),
+);
+
+/** Encrypted authenticator secret; this table, not user preferences, defines active MFA. */
+export const totpMfaConfigurations = pgTable(
+  "totp_mfa_configurations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    encryptedSecret: text("encrypted_secret").notNull(),
+    encryptionKeyId: text("encryption_key_id").notNull(),
+    lastAcceptedStep: bigint("last_accepted_step", { mode: "number" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userUniqueIdx: uniqueIndex("totp_mfa_configurations_user_id_unique_idx").on(table.userId),
+  }),
+);
+
+export const pendingTotpMfaEnrollments = pgTable(
+  "totp_mfa_pending_enrollments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    encryptedSecret: text("encrypted_secret").notNull(),
+    encryptionKeyId: text("encryption_key_id").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userUniqueIdx: uniqueIndex("totp_mfa_pending_enrollments_user_id_unique_idx").on(table.userId),
+    userExpiresIdx: index("totp_mfa_pending_enrollments_user_expires_at_idx").on(
+      table.userId,
+      table.expiresAt,
+    ),
+  }),
+);
+
+export const totpMfaRecoveryCodes = pgTable(
+  "totp_mfa_recovery_codes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    digest: char("digest", { length: 64 }).notNull().unique(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userConsumedIdx: index("totp_mfa_recovery_codes_user_consumed_at_idx").on(
+      table.userId,
+      table.consumedAt,
+    ),
+  }),
+);
+
+export const totpMfaLoginChallenges = pgTable(
+  "totp_mfa_login_challenges",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    digest: char("digest", { length: 64 }).notNull().unique(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    attemptsCheck: check("totp_mfa_login_challenges_attempts_nonnegative_check", sql`${table.attempts} >= 0`),
+    userExpiresConsumedIdx: index("totp_mfa_login_challenges_user_expires_consumed_idx").on(
+      table.userId,
+      table.expiresAt,
+      table.consumedAt,
     ),
   }),
 );
@@ -278,6 +354,7 @@ export const userSettings = pgTable(
     anomalyAlerts: boolean("anomaly_alerts").notNull().default(true),
     shareAnonymised: boolean("share_anonymised").notNull().default(false),
     hideAmounts: boolean("hide_amounts").notNull().default(false),
+    // Legacy preference only. Active MFA is represented exclusively by totp_mfa_configurations.
     twoFactorEnabled: boolean("two_factor_enabled").notNull().default(false),
   },
 );

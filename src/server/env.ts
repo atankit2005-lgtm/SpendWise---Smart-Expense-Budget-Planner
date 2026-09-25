@@ -51,6 +51,41 @@ export function requireDatabaseUrl(): string {
   return url;
 }
 
+export interface TotpEncryptionConfiguration {
+  key: Buffer;
+  keyId: string;
+}
+
+/**
+ * Reads a canonical base64-encoded 32-byte AES key. Return a fresh buffer so
+ * callers cannot mutate shared process configuration.
+ */
+export function requireTotpEncryptionConfiguration(): TotpEncryptionConfiguration {
+  const value = process.env["TOTP_ENCRYPTION_KEY"]?.trim();
+  if (
+    !value ||
+    !/^(?:[A-Za-z0-9+/]{4}){10}[A-Za-z0-9+/]{3}=$/.test(value)
+  ) {
+    throw new ConfigurationError(
+      "TOTP_ENCRYPTION_KEY must be a base64-encoded 32-byte key. Generate a high-entropy key as documented in .env.example.",
+    );
+  }
+
+  const key = Buffer.from(value, "base64");
+  if (key.byteLength !== 32 || key.toString("base64") !== value) {
+    throw new ConfigurationError(
+      "TOTP_ENCRYPTION_KEY must be a canonical base64-encoded 32-byte key. Generate a high-entropy key as documented in .env.example.",
+    );
+  }
+
+  const keyId = process.env["TOTP_ENCRYPTION_KEY_ID"]?.trim() || "primary";
+  if (!/^[A-Za-z0-9._-]{1,64}$/.test(keyId)) {
+    throw new ConfigurationError("TOTP_ENCRYPTION_KEY_ID must be 1-64 safe identifier characters.");
+  }
+
+  return { key, keyId };
+}
+
 function requireEnvironmentValue(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) {

@@ -6,16 +6,23 @@ import {
   getDatabaseUrl,
   isProduction,
   requireDatabaseUrl,
+  requireTotpEncryptionConfiguration,
 } from "./env";
 
 const ORIGINAL_NODE_ENV = process.env["NODE_ENV"];
 const ORIGINAL_DATABASE_URL = process.env["DATABASE_URL"];
+const ORIGINAL_TOTP_ENCRYPTION_KEY = process.env["TOTP_ENCRYPTION_KEY"];
+const ORIGINAL_TOTP_ENCRYPTION_KEY_ID = process.env["TOTP_ENCRYPTION_KEY_ID"];
 
 function withEnv(nodeEnv: string | undefined, databaseUrl: string | undefined): void {
   if (nodeEnv === undefined) delete process.env["NODE_ENV"];
   else process.env["NODE_ENV"] = nodeEnv;
   if (databaseUrl === undefined) delete process.env["DATABASE_URL"];
   else process.env["DATABASE_URL"] = databaseUrl;
+  if (ORIGINAL_TOTP_ENCRYPTION_KEY === undefined) delete process.env["TOTP_ENCRYPTION_KEY"];
+  else process.env["TOTP_ENCRYPTION_KEY"] = ORIGINAL_TOTP_ENCRYPTION_KEY;
+  if (ORIGINAL_TOTP_ENCRYPTION_KEY_ID === undefined) delete process.env["TOTP_ENCRYPTION_KEY_ID"];
+  else process.env["TOTP_ENCRYPTION_KEY_ID"] = ORIGINAL_TOTP_ENCRYPTION_KEY_ID;
 }
 
 describe("environment configuration", () => {
@@ -96,5 +103,37 @@ describe("environment configuration", () => {
         return true;
       },
     );
+  });
+
+  it("requires a canonical base64 AES-256 key without exposing its value", () => {
+    const validKey = Buffer.alloc(32, 0xa5).toString("base64");
+    process.env["TOTP_ENCRYPTION_KEY"] = validKey;
+    process.env["TOTP_ENCRYPTION_KEY_ID"] = "key-2026";
+
+    const first = requireTotpEncryptionConfiguration();
+    const second = requireTotpEncryptionConfiguration();
+    assert.equal(first.key.byteLength, 32);
+    assert.equal(first.keyId, "key-2026");
+    assert.notEqual(first.key, second.key);
+    assert.deepEqual(first.key, second.key);
+
+    for (const invalidKey of [undefined, "", "not-base64", Buffer.alloc(31).toString("base64")]) {
+      if (invalidKey === undefined) delete process.env["TOTP_ENCRYPTION_KEY"];
+      else process.env["TOTP_ENCRYPTION_KEY"] = invalidKey;
+      assert.throws(
+        () => requireTotpEncryptionConfiguration(),
+        (error: unknown) => {
+          assert.ok(error instanceof ConfigurationError);
+          assert.ok(!error.message.includes(validKey));
+          return true;
+        },
+      );
+    }
+  });
+
+  it("rejects unsafe encryption key identifiers", () => {
+    process.env["TOTP_ENCRYPTION_KEY"] = Buffer.alloc(32, 1).toString("base64");
+    process.env["TOTP_ENCRYPTION_KEY_ID"] = "../key";
+    assert.throws(() => requireTotpEncryptionConfiguration(), ConfigurationError);
   });
 });

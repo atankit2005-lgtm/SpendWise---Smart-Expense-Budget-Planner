@@ -17,7 +17,8 @@ export interface User {
 /**
  * Client-facing view of the persisted `user_settings` row. Field names match
  * the settings UI; the mapper translates to/from the DB column names
- * (compact↔compactDensity, twoFactor↔twoFactorEnabled). Persisted in
+ * (compact↔compactDensity, twoFactor↔twoFactorEnabled). `twoFactor` is a
+ * legacy preference and is never authoritative for active MFA. Persisted in
  * PostgreSQL and delivered via the authenticated FinanceSnapshot — never in
  * browser storage.
  */
