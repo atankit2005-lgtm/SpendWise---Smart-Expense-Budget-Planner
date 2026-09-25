@@ -15,7 +15,7 @@ import { AppShell } from "@/components/app/app-shell";
 import { ChartFrame, MetricCard, Panel, ProgressBar, budgetTone } from "@/components/app/ui-bits";
 import { EmptyState } from "@/components/common/state-views";
 import { Badge } from "@/components/ui/badge";
-import { categoryName } from "@/data/mock";
+import { resolveCategoryName } from "@/lib/category-labels";
 import { computeCashFlowSeries } from "@/lib/financial-engine";
 import { formatINR } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -97,6 +97,7 @@ function InsightsPage() {
     healthScore,
     forecast,
     recommendations,
+    categories,
   } = useFinance();
 
   const hasEnoughHistory = transactions.length >= 8;
@@ -309,7 +310,7 @@ function InsightsPage() {
                 return (
                   <li key={risk.budgetId} className="rounded-lg border border-border p-4">
                     <div className="flex items-center justify-between gap-2">
-                      <p className="text-sm font-medium">{categoryName(risk.categoryId)}</p>
+                      <p className="text-sm font-medium">{resolveCategoryName(categories, risk.categoryId)}</p>
                       <Badge variant="outline" className={cn("capitalize", style.badge)}>
                         <RiskIcon className="mr-1 size-3" aria-hidden />
                         {risk.level}

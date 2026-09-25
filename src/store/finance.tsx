@@ -4,17 +4,11 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
-import {
-  budgets as seedBudgets,
-  categories,
-  currentUser,
-  goals as seedGoals,
-  notifications as seedNotifications,
-  transactions as seedTransactions,
-} from "@/data/mock";
+import { useRouterState } from "@tanstack/react-router";
 import {
   categorizeTransaction,
   computeFinancialIntelligence,
@@ -32,16 +26,15 @@ import {
   type FinanceSummary,
 } from "@/lib/financial-engine";
 import { toast } from "sonner";
-import {
-  defaultUserPreferences,
-  type AIInsight,
-  type AppNotification,
-  type Budget,
-  type Category,
-  type Goal,
-  type Transaction,
-  type User,
-  type UserPreferences,
+import type {
+  AIInsight,
+  AppNotification,
+  Budget,
+  Category,
+  Goal,
+  Transaction,
+  User,
+  UserPreferences,
 } from "@/types";
 import type { FinanceSnapshot } from "@/server/mappers";
 import { createRealtimeSync } from "@/lib/realtime/client";
@@ -69,6 +62,13 @@ import {
   persistUpdateTransactionFn,
   persistUserFn,
 } from "@/functions/finance";
+import {
+  emptyFinanceState,
+  financeStatusForSnapshotFailure,
+  shouldLoadFinanceSnapshot,
+  type FinanceLoadStatus,
+} from "./finance-load";
+import { createFinanceSnapshotRequestGuard } from "./finance-request-guard";
 
 function uid(prefix: string) {
   return `${prefix}_${Math.random().toString(36).slice(2, 9)}`;
@@ -118,29 +118,13 @@ export interface FinanceContextValue {
   healthScore: HealthScoreResult;
   forecast: ForecastResult;
   recommendations: Recommendation[];
+
+  /** Snapshot load: ready = DB state; error = failed authenticated load (not mock data). */
+  financeStatus: FinanceLoadStatus;
+  retryFinanceLoad: () => void;
 }
 
 const FinanceContext = createContext<FinanceContextValue | null>(null);
-
-interface PersistedState {
-  user: User;
-  transactions: Transaction[];
-  budgets: Budget[];
-  goals: Goal[];
-  notifications: AppNotification[];
-}
-
-function loadInitialState(): PersistedState {
-  // This render-safe state is immediately replaced with the authenticated
-  // PostgreSQL snapshot. Browser storage is never a financial data source.
-  return {
-    user: currentUser,
-    transactions: seedTransactions,
-    budgets: seedBudgets.map(normalizeBudget),
-    goals: seedGoals,
-    notifications: seedNotifications,
-  };
-}
 
 function normalizeBudget(raw: Budget): Budget {
   return {
@@ -150,7 +134,8 @@ function normalizeBudget(raw: Budget): Budget {
 }
 
 export function FinanceProvider({ children }: { children: ReactNode }) {
-  const initialState = loadInitialState();
+  const inApp = useRouterState({ select: (s) => s.location.pathname.startsWith("/app") });
+  const initialState = emptyFinanceState();
 
   const [user, setUser] = useState<User>(initialState.user);
 
@@ -161,8 +146,11 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const [goals, setGoals] = useState<Goal[]>(initialState.goals);
 
   const [notifications, setNotifications] = useState<AppNotification[]>(initialState.notifications);
-  const [categoryList, setCategoryList] = useState<Category[]>(categories);
-  const [preferences, setPreferences] = useState<UserPreferences>(defaultUserPreferences);
+  const [categoryList, setCategoryList] = useState<Category[]>(initialState.categories);
+  const [preferences, setPreferences] = useState<UserPreferences>(initialState.preferences);
+  const [financeStatus, setFinanceStatus] = useState<FinanceLoadStatus>("loading");
+  const [loadGeneration, setLoadGeneration] = useState(0);
+  const snapshotRequestGuard = useRef(createFinanceSnapshotRequestGuard());
   // Derived AI notifications live in their own lane so the snapshot refetch
   // (which replaces persisted state wholesale) cannot wipe them, reset their
   // read flags, or resurrect dismissed ones. See derived-notifications.ts.
@@ -190,22 +178,52 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     setNotifications(state.notifications);
     setPreferences(state.preferences);
     setAuthedUserId(state.user.id);
+    setFinanceStatus("ready");
+  }, []);
+
+  const applyEmptyFinanceState = useCallback(() => {
+    const empty = emptyFinanceState();
+    setUser(empty.user);
+    setCategoryList(empty.categories);
+    setTransactions(empty.transactions);
+    setBudgets(empty.budgets);
+    setGoals(empty.goals);
+    setNotifications(empty.notifications);
+    setPreferences(empty.preferences);
+    setDerivedNotifications([]);
+    setDismissedDerivedIds(new Set());
+    setAuthedUserId(null);
+  }, []);
+
+  const retryFinanceLoad = useCallback(() => {
+    setFinanceStatus("loading");
+    setLoadGeneration((generation) => generation + 1);
   }, []);
 
   useEffect(() => {
+    if (!shouldLoadFinanceSnapshot(inApp)) return;
+
     let cancelled = false;
+    const requestGeneration = snapshotRequestGuard.current.begin();
+    setFinanceStatus("loading");
 
     void getFinanceSnapshotFn()
       .then((result) => {
-        if (cancelled) return;
+        if (cancelled || !snapshotRequestGuard.current.isCurrent(requestGeneration)) return;
         applySnapshot(result.snapshot);
       })
-      .catch((error) => console.error("SpendWise could not load authenticated data.", error));
+      .catch((error) => {
+        if (cancelled || !snapshotRequestGuard.current.isCurrent(requestGeneration)) return;
+        console.error("SpendWise could not load authenticated data.", error);
+        applyEmptyFinanceState();
+        setFinanceStatus(financeStatusForSnapshotFailure(error));
+      });
 
     return () => {
       cancelled = true;
+      snapshotRequestGuard.current.invalidate();
     };
-  }, [applySnapshot]);
+  }, [applySnapshot, applyEmptyFinanceState, inApp, loadGeneration]);
 
   // Stage 6.3: realtime invalidation. Each supported SSE event means "the
   // authoritative persisted state changed somewhere" — possibly in another
@@ -218,19 +236,39 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
     const sync = createRealtimeSync({
       onInvalidation: async () => {
-        const result = await getFinanceSnapshotFn();
-        applySnapshot(result.snapshot);
+        const requestGeneration = snapshotRequestGuard.current.begin();
+        try {
+          const result = await getFinanceSnapshotFn();
+          if (!snapshotRequestGuard.current.isCurrent(requestGeneration)) return;
+          applySnapshot(result.snapshot);
+        } catch (error) {
+          if (!snapshotRequestGuard.current.isCurrent(requestGeneration)) return;
+          console.error("SpendWise could not refresh authenticated data.", error);
+          applyEmptyFinanceState();
+          setFinanceStatus(financeStatusForSnapshotFailure(error));
+        }
       },
     });
 
-    return () => sync.close();
-  }, [authedUserId, applySnapshot]);
+    return () => {
+      sync.close();
+      snapshotRequestGuard.current.invalidate();
+    };
+  }, [authedUserId, applyEmptyFinanceState, applySnapshot]);
 
   // Stage 6.4: logout is a client-side navigation and this root-level
   // provider stays mounted across it, so the session-ended signal is what
   // drops the authenticated state here. That closes the SSE connection and
   // cancels any pending reconnect timer via the realtime effect's cleanup.
-  useEffect(() => onSessionEnded(() => setAuthedUserId(null)), []);
+  useEffect(
+    () =>
+      onSessionEnded(() => {
+        snapshotRequestGuard.current.invalidate();
+        applyEmptyFinanceState();
+        setFinanceStatus("guest");
+      }),
+    [applyEmptyFinanceState],
+  );
 
   /* ---------------- USER ---------------- */
 
@@ -651,6 +689,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       healthScore: intelligence.healthScore,
       forecast: intelligence.forecast,
       recommendations: intelligence.recommendations,
+      financeStatus,
+      retryFinanceLoad,
     };
   }, [
     user,
@@ -681,6 +721,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     categoryList,
     preferences,
     updatePreferences,
+    financeStatus,
+    retryFinanceLoad,
   ]);
 
   return <FinanceContext.Provider value={value}>{children}</FinanceContext.Provider>;

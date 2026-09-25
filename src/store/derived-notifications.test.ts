@@ -84,13 +84,34 @@ describe("derived AI notifications (Stage 8.2)", () => {
     assert.equal(anomalyAlert.message, "Spike detected for an-1");
   });
 
-  it("falls back to the mock category name for unknown categories", () => {
+  it("falls back to Uncategorised when the category id is not in the persisted list", () => {
     const candidates = buildDerivedNotificationCandidates(
       makeSource({ budgetRisks: [risk("bud-9", "critical", "cat-unknown")] }),
       CREATED_AT,
     );
 
     assert.equal(candidates[0]!.title, "Uncategorised budget exceeded");
+  });
+
+  it("resolves persisted PostgreSQL category UUIDs", () => {
+    const uuid = "e0201921-067e-488d-8d68-54d2f0003801";
+    const candidates = buildDerivedNotificationCandidates(
+      makeSource({
+        categories: [
+          {
+            id: uuid,
+            name: "Food & Dining",
+            type: "expense",
+            color: "var(--chart-1)",
+            icon: "utensils",
+          },
+        ],
+        budgetRisks: [risk("bud-uuid", "critical", uuid)],
+      }),
+      CREATED_AT,
+    );
+
+    assert.equal(candidates[0]!.title, "Food & Dining budget exceeded");
   });
 
   it("produces stable identity: rebuilding from the same state yields the same ids", () => {

@@ -1,6 +1,6 @@
 import { categories, userSettings } from "../../db/schema";
 import { getRequestIP } from "@tanstack/react-start/server";
-import { categories as defaultCategories } from "@/data/mock";
+import { defaultCategories } from "@/data/default-categories";
 import db, { isDatabaseConfigured } from "./db";
 import { ConfigurationError } from "./env";
 import {

@@ -14,7 +14,7 @@ import {
   Wallet,
   X,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils";
 import { useFinance } from "@/store/finance";
 import { logoutFn } from "@/functions/auth";
 import { signalSessionEnded } from "@/lib/realtime/session-signal";
+import { ErrorState, LoadingState } from "@/components/common/state-views";
 
 const nav = [
   { to: "/app", label: "Overview", icon: LayoutDashboard, exact: true },
@@ -167,12 +168,16 @@ export function AppShell({
 }) {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
-  const { unreadCount } = useFinance();
+  const { unreadCount, financeStatus, retryFinanceLoad } = useFinance();
   const logout = async () => {
     await logoutFn();
     signalSessionEnded();
     navigate({ to: "/login" });
   };
+
+  useEffect(() => {
+    if (financeStatus === "guest") navigate({ to: "/login" });
+  }, [financeStatus, navigate]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -245,7 +250,19 @@ export function AppShell({
             </div>
           </div>
         </header>
-        <main className="px-4 py-6 sm:px-6 lg:px-8">{children}</main>
+        <main className="px-4 py-6 sm:px-6 lg:px-8">
+          {financeStatus === "error" ? (
+            <ErrorState
+              title="Couldn't load your finances"
+              description="Your account data failed to load, so nothing is displayed rather than showing data that isn't yours. Please try again."
+              onRetry={retryFinanceLoad}
+            />
+          ) : financeStatus === "ready" ? (
+            children
+          ) : (
+            <LoadingState label="Loading your finances" rows={6} />
+          )}
+        </main>
       </div>
     </div>
   );

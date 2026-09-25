@@ -162,7 +162,7 @@ function LandingPage() {
                   </Link>
                 </Button>
                 <Button asChild size="lg" variant="outline">
-                  <Link to="/app">Explore Demo</Link>
+                  <Link to="/login">Log in to explore</Link>
                 </Button>
               </div>
               <dl className="mt-12 grid max-w-md grid-cols-3 gap-6 border-t border-border pt-6">

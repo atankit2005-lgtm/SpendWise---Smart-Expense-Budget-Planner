@@ -18,7 +18,8 @@ import { AppShell } from "@/components/app/app-shell";
 import { ChartFrame, MetricCard, Panel, ProgressBar } from "@/components/app/ui-bits";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { categoryColor, categoryName, timeRangeLabels } from "@/data/mock";
+import { timeRangeLabels } from "@/data/time-range-labels";
+import { resolveCategoryColor, resolveCategoryName } from "@/lib/category-labels";
 import { computeAnalyticsSeries } from "@/lib/financial-engine";
 import { formatINR } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -55,7 +56,7 @@ const tooltipStyle = {
 const ranges: TimeRange[] = ["7d", "30d", "3m", "6m", "1y"];
 
 function AnalyticsPage() {
-  const { transactions, patterns, anomalies, forecast } = useFinance();
+  const { transactions, patterns, anomalies, forecast, categories } = useFinance();
   const [range, setRange] = useState<TimeRange>("6m");
   const series = useMemo(() => computeAnalyticsSeries(transactions, range), [transactions, range]);
 
@@ -81,13 +82,13 @@ function AnalyticsPage() {
     return Object.entries(map)
       .map(([id, amount]) => ({
         id,
-        name: categoryName(id),
+        name: resolveCategoryName(categories, id),
         amount,
-        color: categoryColor(id),
+        color: resolveCategoryColor(categories, id),
         percentage: Math.round((amount / total) * 100),
       }))
       .sort((a, b) => b.amount - a.amount);
-  }, [transactions]);
+  }, [transactions, categories]);
 
   return (
     <AppShell title="Analytics" description={`Viewing ${timeRangeLabels[range]}`}>

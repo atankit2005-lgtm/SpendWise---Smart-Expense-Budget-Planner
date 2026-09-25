@@ -18,7 +18,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { categories, categoryName } from "@/data/mock";
+import { resolveCategoryName } from "@/lib/category-labels";
 import { formatINR } from "@/lib/format";
 import { useFinance } from "@/store/finance";
 import type { Budget, BudgetPeriod } from "@/types";
@@ -36,14 +36,14 @@ export const Route = createFileRoute("/app/budgets")({
 });
 
 type Form = { categoryId: string; limit: string; spent: string; period: BudgetPeriod };
-const emptyForm: Form = { categoryId: "cat_food", limit: "", spent: "0", period: "monthly" };
+const emptyForm: Form = { categoryId: "", limit: "", spent: "0", period: "monthly" };
 
 function BudgetsPage() {
-  const { budgets, addBudget, updateBudget, deleteBudget } = useFinance();
+  const { budgets, categories, addBudget, updateBudget, deleteBudget } = useFinance();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Budget | null>(null);
   const [form, setForm] = useState<Form>(emptyForm);
-  const [errors, setErrors] = useState<Partial<Record<"limit" | "spent", string>>>({});
+  const [errors, setErrors] = useState<Partial<Record<"limit" | "spent" | "categoryId", string>>>({});
   const [deleteTarget, setDeleteTarget] = useState<Budget | null>(null);
 
   const totalBudget = budgets.reduce((s, b) => s + b.limit, 0);
@@ -53,7 +53,8 @@ function BudgetsPage() {
 
   function openCreate() {
     setEditing(null);
-    setForm(emptyForm);
+    const firstExpense = categories.find((category) => category.type === "expense");
+    setForm({ ...emptyForm, categoryId: firstExpense?.id ?? "" });
     setErrors({});
     setOpen(true);
   }
@@ -67,9 +68,10 @@ function BudgetsPage() {
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
-    const next: Partial<Record<"limit" | "spent", string>> = {};
+    const next: Partial<Record<"limit" | "spent" | "categoryId", string>> = {};
     const limit = Number(form.limit);
     const spent = Number(form.spent);
+    if (!form.categoryId) next.categoryId = "Select a category.";
     if (!form.limit || Number.isNaN(limit) || limit <= 0) next.limit = "Enter a limit greater than zero.";
     if (Number.isNaN(spent) || spent < 0) next.spent = "Spent must be zero or more.";
     setErrors(next);
@@ -125,7 +127,7 @@ function BudgetsPage() {
                 <article key={b.id} className="rounded-xl border border-border bg-card p-5">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <h2 className="text-sm font-semibold">{categoryName(b.categoryId)}</h2>
+                      <h2 className="text-sm font-semibold">{resolveCategoryName(categories, b.categoryId)}</h2>
                       <p className="text-xs capitalize text-muted-foreground">{b.period} budget</p>
                     </div>
                     <Badge
@@ -164,7 +166,7 @@ function BudgetsPage() {
           </div>
         )}
 
-        <Panel title="How utilisation is calculated" description="Stage 1 uses mock spend data">
+        <Panel title="How utilisation is calculated" description="Based on your recorded transactions">
           <p className="text-sm leading-relaxed text-muted-foreground">
             Each budget compares recorded spending in its category against the limit for the period. Adding an
             expense transaction in a budgeted category increases the spent amount immediately, and status badges
@@ -197,6 +199,7 @@ function BudgetsPage() {
                     ))}
                 </SelectContent>
               </Select>
+              {errors.categoryId ? <p className="text-xs text-destructive">{errors.categoryId}</p> : null}
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
@@ -250,7 +253,7 @@ function BudgetsPage() {
           <DialogHeader>
             <DialogTitle>Delete budget?</DialogTitle>
             <DialogDescription>
-              {deleteTarget ? `The ${categoryName(deleteTarget.categoryId)} budget will be removed.` : ""}
+              {deleteTarget ? `The ${resolveCategoryName(categories, deleteTarget.categoryId)} budget will be removed.` : ""}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

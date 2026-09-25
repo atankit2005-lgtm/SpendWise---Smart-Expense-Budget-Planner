@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { resolveCategoryName } from "@/lib/category-labels";
 import { formatDate, formatINR } from "@/lib/format";
 import { useFinance } from "@/store/finance";
 import type { PaymentMethod, Transaction, TransactionType } from "@/types";
@@ -247,7 +248,7 @@ function TransactionsPage() {
                     <tr key={t.id} className="hover:bg-elevated/40">
                       <td className="whitespace-nowrap py-3 pr-4 text-muted-foreground">{formatDate(t.date)}</td>
                       <td className="py-3 pr-4 font-medium">{t.description}</td>
-                      <td className="py-3 pr-4 text-muted-foreground">{categories.find((c) => c.id === t.categoryId)?.name ?? "Uncategorized"}</td>
+                      <td className="py-3 pr-4 text-muted-foreground">{resolveCategoryName(categories, t.categoryId)}</td>
                       <td className="hidden py-3 pr-4 text-muted-foreground md:table-cell">{t.paymentMethod}</td>
                       <td className={`whitespace-nowrap py-3 pr-4 text-right font-semibold ${t.type === "income" ? "text-primary" : ""}`}>
                         {t.type === "income" ? "+" : "−"}

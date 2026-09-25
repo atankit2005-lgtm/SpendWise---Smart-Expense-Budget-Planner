@@ -20,7 +20,7 @@
  */
 
 import type { AnomalyResult, BudgetRiskResult } from "@/lib/ai";
-import { categoryName as mockCategoryName } from "@/data/mock";
+import { resolveCategoryName } from "@/lib/category-labels";
 import type { AppNotification, Category } from "@/types";
 
 export interface DerivedNotificationSource {
@@ -41,9 +41,7 @@ export function buildDerivedNotificationCandidates(
   const candidates: AppNotification[] = [];
 
   source.budgetRisks.forEach((risk) => {
-    const name =
-      source.categories.find((category) => category.id === risk.categoryId)?.name ??
-      mockCategoryName(risk.categoryId);
+    const name = resolveCategoryName(source.categories, risk.categoryId);
 
     if (risk.level === "critical") {
       candidates.push({

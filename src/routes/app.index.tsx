@@ -29,7 +29,7 @@ import { ChartFrame, MetricCard, Panel, ProgressBar, budgetTone } from "@/compon
 import { EmptyState } from "@/components/common/state-views";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { categoryColor, categoryName } from "@/data/mock";
+import { resolveCategoryColor, resolveCategoryName } from "@/lib/category-labels";
 import { computeAnalyticsSeries } from "@/lib/financial-engine";
 import { formatDate, formatINR } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -65,7 +65,7 @@ function healthBadgeTone(grade: string) {
 }
 
 function DashboardPage() {
-  const { summary, transactions, budgets, insights, healthScore, recommendations } = useFinance();
+  const { summary, transactions, budgets, insights, healthScore, recommendations, categories } = useFinance();
   const series = useMemo(() => computeAnalyticsSeries(transactions, "6m"), [transactions]);
   const topRecommendation = recommendations[0];
 
@@ -76,7 +76,11 @@ function DashboardPage() {
       return acc;
     }, {});
   const pieData = Object.entries(expenseByCategory)
-    .map(([id, amount]) => ({ name: categoryName(id), value: amount, color: categoryColor(id) }))
+    .map(([id, amount]) => ({
+      name: resolveCategoryName(categories, id),
+      value: amount,
+      color: resolveCategoryColor(categories, id),
+    }))
     .sort((a, b) => b.value - a.value)
     .slice(0, 6);
 
@@ -236,7 +240,7 @@ function DashboardPage() {
                   return (
                     <li key={b.id}>
                       <div className="flex items-baseline justify-between text-sm">
-                        <span className="font-medium">{categoryName(b.categoryId)}</span>
+                        <span className="font-medium">{resolveCategoryName(categories, b.categoryId)}</span>
                         <span className="text-xs text-muted-foreground">
                           {formatINR(b.spent)} / {formatINR(b.limit)}
                         </span>
@@ -283,7 +287,7 @@ function DashboardPage() {
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium">{t.description}</p>
                       <p className="text-xs text-muted-foreground">
-                        {categoryName(t.categoryId)} · {formatDate(t.date)} · {t.paymentMethod}
+                        {resolveCategoryName(categories, t.categoryId)} · {formatDate(t.date)} · {t.paymentMethod}
                       </p>
                     </div>
                     <span
