@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { changePasswordFn, signOutOtherSessionsFn } from "@/functions/auth";
+import { exportPersonalDataFn } from "@/functions/finance";
 import { useFinance } from "@/store/finance";
 import type { UserPreferences } from "@/types";
 
@@ -48,6 +49,7 @@ function SettingsPage() {
   const [passwordError, setPasswordError] = useState("");
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [exportLoading, setExportLoading] = useState(false);
 
   const toggle = (key: PreferenceToggle) => (value: boolean) => {
     // Optimistic: the switch flips immediately; a failed persist surfaces an
@@ -90,6 +92,27 @@ function SettingsPage() {
       toast.error(error instanceof Error ? error.message : "Could not sign out other sessions.");
     } finally {
       setSessionsLoading(false);
+    }
+  }
+
+  async function exportData() {
+    setExportLoading(true);
+    try {
+      const data = await exportPersonalDataFn();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `spendwise-export-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      toast.success("Your data export is ready");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not export your data.");
+    } finally {
+      setExportLoading(false);
     }
   }
 
@@ -166,8 +189,8 @@ function SettingsPage() {
               <Switch checked={preferences.hideAmounts} onCheckedChange={toggle("hideAmounts")} aria-label="Hide amounts" />
             </Row>
             <Row title="Export data" description="Download a copy of your SpendWise records.">
-              <Button variant="outline" size="sm" onClick={() => toast.success("Export queued — demo only")}>
-                Export
+              <Button variant="outline" size="sm" onClick={() => void exportData()} disabled={exportLoading}>
+                {exportLoading ? "Exporting…" : "Export"}
               </Button>
             </Row>
           </Panel>
@@ -175,8 +198,10 @@ function SettingsPage() {
 
         <TabsContent value="security">
           <Panel title="Security" description="Protect access to your account">
-            <Row title="Two-factor authentication" description="Require a one-time code at login.">
-              <Switch checked={preferences.twoFactor} onCheckedChange={toggle("twoFactor")} aria-label="Two-factor authentication" />
+            <Row title="Two-factor authentication" description="Two-factor authentication is not available yet.">
+              <span className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground">
+                Not available yet
+              </span>
             </Row>
             <form className="space-y-4 border-b border-border py-4" onSubmit={changePassword}>
               <div>
@@ -193,7 +218,7 @@ function SettingsPage() {
                 {passwordLoading ? "Changing…" : "Change password"}
               </Button>
             </form>
-            <Row title="Active sessions" description="You are signed in on 2 devices.">
+            <Row title="Active sessions" description="Manage your active sessions from this account.">
               <Button variant="outline" size="sm" onClick={signOutOthers} disabled={sessionsLoading}>
                 {sessionsLoading ? "Signing out…" : "Sign out others"}
               </Button>

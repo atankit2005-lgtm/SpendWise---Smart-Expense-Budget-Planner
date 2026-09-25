@@ -51,6 +51,40 @@ export function persistenceAvailable(): boolean {
   return isDatabaseConfigured();
 }
 
+export async function exportPersonalData(): Promise<{
+  exportedAt: string;
+  profile: User;
+  preferences: UserPreferences;
+  categories: FinanceSnapshot["categories"];
+  transactions: FinanceSnapshot["transactions"];
+  budgets: FinanceSnapshot["budgets"];
+  goals: FinanceSnapshot["goals"];
+  notifications: FinanceSnapshot["notifications"];
+}> {
+  const userId = await requireSessionUserId();
+  const [user, preferences, categoryRows, transactionRows, budgetRows, goalRows, notificationRows] =
+    await Promise.all([
+      getUserById(userId),
+      loadPreferences(userId),
+      listCategoriesForUser(userId),
+      listTransactionsForUser(userId),
+      listBudgetsForUser(userId),
+      listGoalsForUser(userId),
+      listNotificationsForUser(userId),
+    ]);
+
+  return {
+    exportedAt: new Date().toISOString(),
+    profile: toUser(user),
+    preferences,
+    categories: categoryRows.map(toCategory),
+    transactions: transactionRows.map(toTransaction),
+    budgets: budgetRows.map(toBudget),
+    goals: goalRows.map(toGoal),
+    notifications: notificationRows.map(toNotification),
+  };
+}
+
 export async function loadFinanceSnapshot(): Promise<FinanceSnapshot> {
   const userId = await requireSessionUserId();
 

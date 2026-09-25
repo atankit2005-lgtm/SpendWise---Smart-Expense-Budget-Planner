@@ -5,6 +5,7 @@ import { ConfigurationError } from "@/server/env";
 import { withErrorBoundary } from "@/server/error-boundary";
 import {
   loadFinanceSnapshot,
+  exportPersonalData,
   persistCreateBudget,
   persistCreateGoal,
   persistCreateTransaction,
@@ -32,6 +33,10 @@ export const getFinanceSnapshotFn = createServerFn({ method: "GET" }).handler(
       requirePersistence();
       return { snapshot: await loadFinanceSnapshot() };
     }),
+);
+
+export const exportPersonalDataFn = createServerFn({ method: "GET" }).handler(() =>
+  withDatabase(() => exportPersonalData()),
 );
 
 /**
