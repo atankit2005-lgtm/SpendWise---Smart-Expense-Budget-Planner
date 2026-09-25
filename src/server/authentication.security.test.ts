@@ -19,6 +19,9 @@ const control = {
   sessions: [] as string[],
   rehashed: [] as Array<{ userId: string; passwordHash: string }>,
   revokedOtherSessions: [] as string[],
+  cookieCalls: 0,
+  signupFailure: "" as "" | "settings" | "categories" | "session",
+  signupInsertCalls: 0,
   verifyCalls: [] as Array<{ password: string; encoded: string | null }>,
   nextUserId: 1,
 };
@@ -29,10 +32,36 @@ mock.module("@tanstack/react-start/server", {
   },
 });
 
-const fakeDb = {
+type FakeDb = {
+  insert: (table?: unknown) => { values: (values?: unknown) => Promise<unknown[]> };
+  transaction: (run: (tx: FakeDb) => Promise<unknown>) => Promise<unknown>;
+};
+
+const fakeDb: FakeDb = {
   insert: () => ({
-    values: async () => [],
+    values: async () => {
+      control.signupInsertCalls += 1;
+      if (
+        (control.signupFailure === "settings" && control.signupInsertCalls === 1) ||
+        (control.signupFailure === "categories" && control.signupInsertCalls === 2)
+      ) {
+        throw new Error("signup write failed");
+      }
+      return [];
+    },
   }),
+  transaction: async (run: (tx: FakeDb) => Promise<unknown>) => {
+    const users = new Map(control.users);
+    const sessions = [...control.sessions];
+    control.signupInsertCalls = 0;
+    try {
+      return await run(fakeDb);
+    } catch (error) {
+      control.users = users;
+      control.sessions = sessions;
+      throw error;
+    }
+  },
 };
 
 mock.module("./db", {
@@ -61,6 +90,14 @@ mock.module("./session", {
   namedExports: {
     createSession: async (userId: string) => {
       control.sessions.push(userId);
+    },
+    createSessionRecord: async (userId: string) => {
+      if (control.signupFailure === "session") throw new Error("session write failed");
+      control.sessions.push(userId);
+      return "test-session-token";
+    },
+    setSessionCookie: () => {
+      control.cookieCalls += 1;
     },
     destroyCurrentSession: async () => {},
     destroyOtherSessions: async (userId: string) => {
@@ -200,6 +237,9 @@ beforeEach(() => {
   control.sessions = [];
   control.rehashed = [];
   control.revokedOtherSessions = [];
+  control.cookieCalls = 0;
+  control.signupFailure = "";
+  control.signupInsertCalls = 0;
   control.verifyCalls = [];
   control.nextUserId = 1;
   resetRateLimitState();
@@ -292,6 +332,43 @@ describe("signup enumeration prevention (Stage 8.3)", () => {
     assert.equal(user.email, "brand-new@example.com");
     assert.deepEqual(control.sessions, [user.id], "signup auto-logs-in via a session");
     assert.ok(user.passwordHash?.startsWith("current:"), "password stored hashed, never plaintext");
+    assert.equal(control.cookieCalls, 1, "session cookie is emitted after a successful transaction");
+  });
+
+  it("does not emit a cookie when settings initialization fails", async () => {
+    control.signupFailure = "settings";
+
+    await assert.rejects(() =>
+      signUp({ name: "New Person", email: "settings-fail@example.com", password: "correct horse battery" }),
+    );
+
+    assert.equal(control.users.size, 0);
+    assert.deepEqual(control.sessions, []);
+    assert.equal(control.cookieCalls, 0);
+  });
+
+  it("does not emit a cookie when default categories fail", async () => {
+    control.signupFailure = "categories";
+
+    await assert.rejects(() =>
+      signUp({ name: "New Person", email: "categories-fail@example.com", password: "correct horse battery" }),
+    );
+
+    assert.equal(control.users.size, 0);
+    assert.deepEqual(control.sessions, []);
+    assert.equal(control.cookieCalls, 0);
+  });
+
+  it("rolls back account writes when session creation fails", async () => {
+    control.signupFailure = "session";
+
+    await assert.rejects(() =>
+      signUp({ name: "New Person", email: "session-fail@example.com", password: "correct horse battery" }),
+    );
+
+    assert.equal(control.users.size, 0);
+    assert.deepEqual(control.sessions, []);
+    assert.equal(control.cookieCalls, 0);
   });
 });
 

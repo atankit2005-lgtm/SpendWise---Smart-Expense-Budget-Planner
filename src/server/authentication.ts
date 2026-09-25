@@ -11,7 +11,14 @@ import {
 } from "./errors";
 import { hashPassword, needsRehash, verifyPassword } from "./password";
 import { consumeRateLimit } from "./rate-limit";
-import { createSession, destroyCurrentSession, destroyOtherSessions, getSessionUserId } from "./session";
+import {
+  createSession,
+  createSessionRecord,
+  destroyCurrentSession,
+  destroyOtherSessions,
+  getSessionUserId,
+  setSessionCookie,
+} from "./session";
 import {
   createUser,
   getUserByEmail,
@@ -113,26 +120,47 @@ export async function signUp(input: { name: string; email: string; password: str
   if (await getUserByEmail(email)) throw new ValidationError(SIGNUP_REJECTED_MESSAGE);
 
   let user: UserRecord;
+  let sessionToken: string;
   try {
-    user = await createUser({ name, email, passwordHash: await hashPassword(input.password) });
+    const result = await db.transaction(async (tx) => {
+      let createdUser: UserRecord;
+      try {
+        createdUser = await createUser(
+          { name, email, passwordHash: await hashPassword(input.password) },
+          tx,
+        );
+      } catch (error) {
+        // A concurrent-signup race surfaces as DuplicateResourceError from the
+        // repository's own pre-check; keep the client-facing message generic.
+        if (error instanceof DuplicateResourceError) {
+          throw new ValidationError(SIGNUP_REJECTED_MESSAGE);
+        }
+        throw error;
+      }
+
+      await tx.insert(userSettings).values({ userId: createdUser.id });
+      await tx.insert(categories).values(
+        defaultCategories.map((category) => ({
+          userId: createdUser.id,
+          name: category.name,
+          type: category.type,
+          color: category.color,
+          icon: category.icon,
+        })),
+      );
+      const token = await createSessionRecord(createdUser.id, tx);
+      return { user: createdUser, token };
+    });
+    user = result.user;
+    sessionToken = result.token;
   } catch (error) {
-    // A concurrent-signup race surfaces as DuplicateResourceError from the
-    // repository's own pre-check; keep the client-facing message generic.
-    if (error instanceof DuplicateResourceError) throw new ValidationError(SIGNUP_REJECTED_MESSAGE);
+    if (error instanceof DuplicateResourceError) {
+      throw new ValidationError(SIGNUP_REJECTED_MESSAGE);
+    }
     throw error;
   }
 
-  await db.insert(userSettings).values({ userId: user.id });
-  await db.insert(categories).values(
-    defaultCategories.map((category) => ({
-      userId: user.id,
-      name: category.name,
-      type: category.type,
-      color: category.color,
-      icon: category.icon,
-    })),
-  );
-  await createSession(user.id);
+  setSessionCookie(sessionToken);
   return user;
 }
 

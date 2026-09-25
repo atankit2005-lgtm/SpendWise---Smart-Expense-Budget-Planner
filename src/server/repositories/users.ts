@@ -4,7 +4,9 @@ import { type InferInsertModel, type InferSelectModel } from "drizzle-orm";
 import { users } from "../../../db/schema";
 import { resolveUserId } from "../auth";
 import { DuplicateResourceError, NotFoundError } from "../errors";
-import db from "../db";
+import db, { type SpendWiseDatabase } from "../db";
+
+type UserWriteExecutor = Pick<SpendWiseDatabase, "select" | "insert">;
 
 export type UserRecord = InferSelectModel<typeof users>;
 export type UserInsert = InferInsertModel<typeof users>;
@@ -21,11 +23,14 @@ export async function getUserById(userId: string): Promise<UserRecord> {
   return row[0];
 }
 
-export async function getUserByEmail(email: string): Promise<UserRecord | null> {
+export async function getUserByEmail(
+  email: string,
+  executor: UserWriteExecutor = db,
+): Promise<UserRecord | null> {
   const normalized = email.trim();
   if (!normalized) return null;
 
-  const row = await db.select().from(users).where(eq(users.email, normalized as never)).limit(1);
+  const row = await executor.select().from(users).where(eq(users.email, normalized as never)).limit(1);
   return row[0] ?? null;
 }
 
@@ -46,7 +51,7 @@ export async function createUser(input: {
   occupation?: string | null;
   currency?: string | null;
   avatarUrl?: string | null;
-}): Promise<UserRecord> {
+}, executor: UserWriteExecutor = db): Promise<UserRecord> {
   const email = input.email.trim();
   const name = input.name.trim();
 
@@ -54,12 +59,12 @@ export async function createUser(input: {
     throw new Error("Email is required.");
   }
 
-  const existing = await getUserByEmail(email);
+  const existing = await getUserByEmail(email, executor);
   if (existing) {
     throw new DuplicateResourceError("A user with that email already exists.");
   }
 
-  const [created] = await db
+  const [created] = await executor
     .insert(users)
     .values({
       ...(input.id ? { id: input.id } : {}),

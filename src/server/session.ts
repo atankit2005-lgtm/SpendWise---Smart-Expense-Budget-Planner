@@ -3,7 +3,7 @@ import { and, eq, gt, not } from "drizzle-orm";
 import { getRequestHeader, setResponseHeader } from "@tanstack/react-start/server";
 
 import { sessions } from "../../db/schema";
-import db from "./db";
+import db, { type SpendWiseDatabase } from "./db";
 import { UnauthorizedError } from "./errors";
 
 const COOKIE_NAME = "spendwise_session";
@@ -46,13 +46,21 @@ export function clearSessionCookie(): void {
 }
 
 export async function createSession(userId: string): Promise<void> {
+  const token = await createSessionRecord(userId, db);
+  setSessionCookie(token);
+}
+
+export async function createSessionRecord(
+  userId: string,
+  executor: Pick<SpendWiseDatabase, "insert"> = db,
+): Promise<string> {
   const token = createSessionToken();
-  await db.insert(sessions).values({
+  await executor.insert(sessions).values({
     userId,
     tokenHash: hashSessionToken(token),
     expiresAt: new Date(Date.now() + SESSION_AGE_SECONDS * 1000),
   });
-  setSessionCookie(token);
+  return token;
 }
 
 export async function getSessionUserId(): Promise<string | null> {
