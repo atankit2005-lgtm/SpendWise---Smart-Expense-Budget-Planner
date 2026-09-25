@@ -10,6 +10,7 @@ import {
   ValidationError,
 } from "./errors";
 import { hashPassword, needsRehash, verifyPassword } from "./password";
+import { validatePassword } from "./password-policy";
 import { consumeRateLimit } from "./rate-limit";
 import {
   createSession,
@@ -96,10 +97,6 @@ export function enforceAuthRateLimit(action: "login" | "signup", rawEmail: strin
 function validateCredentials(email: string, password: string): void {
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new ValidationError("Enter a valid email address.");
   validatePassword(password);
-}
-
-function validatePassword(password: string): void {
-  if (password.length < 8) throw new ValidationError("Password must be at least 8 characters.");
 }
 
 function requireDatabase(): void {

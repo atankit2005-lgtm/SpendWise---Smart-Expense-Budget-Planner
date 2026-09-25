@@ -79,6 +79,25 @@ export const sessions = pgTable(
   }),
 );
 
+/** One outstanding password-reset token digest per user; raw tokens are never persisted. */
+export const passwordResetTokens = pgTable(
+  "password_reset_tokens",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: char("token_hash", { length: 64 }).notNull().unique(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userUniqueIdx: uniqueIndex("password_reset_tokens_user_id_unique_idx").on(table.userId),
+    userExpiresIdx: index("password_reset_tokens_user_expires_at_idx").on(
+      table.userId,
+      table.expiresAt,
+    ),
+  }),
+);
+
 export const categories = pgTable(
   "categories",
   {

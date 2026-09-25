@@ -50,3 +50,42 @@ export function requireDatabaseUrl(): string {
 
   return url;
 }
+
+function requireEnvironmentValue(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    throw new ConfigurationError(`${name} is not set. Configure it in the server environment.`);
+  }
+  return value;
+}
+
+export interface PasswordResetEmailConfiguration {
+  apiKey: string;
+  fromEmail: string;
+  appBaseUrl: URL;
+}
+
+export function requirePasswordResetEmailConfiguration(): PasswordResetEmailConfiguration {
+  const apiKey = requireEnvironmentValue("RESEND_API_KEY");
+  const fromEmail = requireEnvironmentValue("RESEND_FROM_EMAIL");
+  const rawBaseUrl = requireEnvironmentValue("APP_BASE_URL");
+
+  let appBaseUrl: URL;
+  try {
+    appBaseUrl = new URL(rawBaseUrl);
+  } catch {
+    throw new ConfigurationError("APP_BASE_URL must be a valid absolute URL.");
+  }
+
+  if (
+    (appBaseUrl.protocol !== "https:" && !(appBaseUrl.protocol === "http:" && !isProduction())) ||
+    appBaseUrl.username ||
+    appBaseUrl.password ||
+    appBaseUrl.search ||
+    appBaseUrl.hash
+  ) {
+    throw new ConfigurationError("APP_BASE_URL must be a canonical HTTP(S) URL without credentials or query parameters.");
+  }
+
+  return { apiKey, fromEmail, appBaseUrl };
+}

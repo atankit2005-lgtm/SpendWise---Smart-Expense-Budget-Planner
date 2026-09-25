@@ -35,10 +35,20 @@ export async function getUserByEmail(
 }
 
 /** Transparent upgrade path for hashes created with older scrypt parameters. */
-export async function updateUserPasswordHash(userId: string, passwordHash: string): Promise<void> {
+export async function updateUserPasswordHash(
+  userId: string,
+  passwordHash: string,
+  executor: Pick<SpendWiseDatabase, "update"> = db,
+): Promise<boolean> {
   const currentUserId = resolveUserId(userId);
 
-  await db.update(users).set({ passwordHash }).where(eq(users.id, currentUserId));
+  const updated = await executor
+    .update(users)
+    .set({ passwordHash })
+    .where(eq(users.id, currentUserId))
+    .returning({ id: users.id });
+
+  return updated.length > 0;
 }
 
 export async function createUser(input: {

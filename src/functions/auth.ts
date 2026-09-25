@@ -10,6 +10,7 @@ import {
   signUp,
 } from "@/server/authentication";
 import { withErrorBoundary } from "@/server/error-boundary";
+import { completePasswordReset, requestPasswordReset } from "@/server/password-reset";
 
 // Rate limiting lives at this request boundary: `enforceAuthRateLimit` reads
 // the client IP from the live request, and a blocked attempt throws
@@ -32,6 +33,14 @@ export const loginFn = createServerFn({ method: "POST" })
       return toUser(await logIn(data));
     }),
   );
+
+export const requestPasswordResetFn = createServerFn({ method: "POST" })
+  .validator((data: { email: string }) => data)
+  .handler(({ data }) => withErrorBoundary(() => requestPasswordReset(data)));
+
+export const completePasswordResetFn = createServerFn({ method: "POST" })
+  .validator((data: { token: string; newPassword: string }) => data)
+  .handler(({ data }) => withErrorBoundary(() => completePasswordReset(data)));
 
 export const logoutFn = createServerFn({ method: "POST" }).handler(() =>
   withErrorBoundary(async () => {
