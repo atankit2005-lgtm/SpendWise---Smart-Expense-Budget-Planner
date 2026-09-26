@@ -15,7 +15,10 @@ const control = {
   databaseConfigured: true,
   ip: "203.0.113.7",
   /** Stored users keyed by normalized email. passwordHash uses fake encodings. */
-  users: new Map<string, { id: string; email: string; name: string; passwordHash: string | null }>(),
+  users: new Map<
+    string,
+    { id: string; email: string; name: string; passwordHash: string | null }
+  >(),
   sessions: [] as string[],
   rehashed: [] as Array<{ userId: string; passwordHash: string }>,
   revokedOtherSessions: [] as string[],
@@ -34,6 +37,11 @@ mock.module("@tanstack/react-start/server", {
 
 type FakeDb = {
   insert: (table?: unknown) => { values: (values?: unknown) => Promise<unknown[]> };
+  select: () => {
+    from: (table?: unknown) => {
+      where: (condition?: unknown) => { limit: (count?: number) => Promise<unknown[]> };
+    };
+  };
   transaction: (run: (tx: FakeDb) => Promise<unknown>) => Promise<unknown>;
 };
 
@@ -49,6 +57,17 @@ const fakeDb: FakeDb = {
       }
       return [];
     },
+  }),
+  // The users seeded here have no MFA configuration rows. logIn's MFA check
+  // runs the real getTotpMfaConfiguration against this fake, so selecting no
+  // rows keeps every seeded account on the non-MFA login path (fail-closed:
+  // userHasActiveMfa propagates errors, so the fake must answer, not throw).
+  select: () => ({
+    from: () => ({
+      where: () => ({
+        limit: async () => [],
+      }),
+    }),
   }),
   transaction: async (run: (tx: FakeDb) => Promise<unknown>) => {
     const users = new Map(control.users);
@@ -81,8 +100,7 @@ mock.module("./password", {
       control.verifyCalls.push({ password, encoded });
       return typeof encoded === "string" && encoded.endsWith(`:${password}`);
     },
-    needsRehash: (encoded: string | null) =>
-      encoded == null || encoded.startsWith("legacy:"),
+    needsRehash: (encoded: string | null) => encoded == null || encoded.startsWith("legacy:"),
   },
 });
 
@@ -186,9 +204,15 @@ describe("authenticated account operations (Stage 9.3A)", () => {
         !error.message.includes("incorrect password"),
     );
     control.sessions = [];
-    await assert.rejects(() => reauthenticateCurrentUser("correct horse battery"), UnauthorizedError);
+    await assert.rejects(
+      () => reauthenticateCurrentUser("correct horse battery"),
+      UnauthorizedError,
+    );
     control.sessions = ["unknown-session-user"];
-    await assert.rejects(() => reauthenticateCurrentUser("correct horse battery"), UnauthorizedError);
+    await assert.rejects(
+      () => reauthenticateCurrentUser("correct horse battery"),
+      UnauthorizedError,
+    );
     assert.equal(control.verifyCalls.length, 1, "invalid session users must not verify a password");
   });
 
@@ -315,18 +339,27 @@ describe("authentication rate limiting (Stage 8.3)", () => {
 
   it("limits by IP across many different emails", () => {
     for (let i = 0; i < 20; i++) enforceAuthRateLimit("login", `user${i}@example.com`);
-    assert.throws(() => enforceAuthRateLimit("login", "brand-new@example.com"), TooManyRequestsError);
+    assert.throws(
+      () => enforceAuthRateLimit("login", "brand-new@example.com"),
+      TooManyRequestsError,
+    );
   });
 
   it("limits signup more aggressively than login", () => {
     // Per-email: 3 signup attempts allowed, 4th throws.
     for (let i = 0; i < 3; i++) enforceAuthRateLimit("signup", "spammer@example.com");
-    assert.throws(() => enforceAuthRateLimit("signup", "spammer@example.com"), TooManyRequestsError);
+    assert.throws(
+      () => enforceAuthRateLimit("signup", "spammer@example.com"),
+      TooManyRequestsError,
+    );
 
     // Per-IP: 10 distinct-email signups allowed, 11th throws.
     resetRateLimitState();
     for (let i = 0; i < 10; i++) enforceAuthRateLimit("signup", `signup${i}@example.com`);
-    assert.throws(() => enforceAuthRateLimit("signup", "signup10@example.com"), TooManyRequestsError);
+    assert.throws(
+      () => enforceAuthRateLimit("signup", "signup10@example.com"),
+      TooManyRequestsError,
+    );
   });
 
   it("429s surface through logIn once the limiter is exhausted", async () => {
@@ -345,6 +378,35 @@ describe("authentication rate limiting (Stage 8.3)", () => {
     const keys = listRateLimitKeys().join(" ");
     assert.ok(!keys.includes("correct horse"), "passwords must never be a limiter key");
     assert.ok(keys.includes("secret-person@example.com"), "normalized email is the key");
+  });
+
+  // Extension 2.3: the MFA-verification endpoint isn't authenticated yet and
+  // has no email to key on, so it reuses this same mechanism keyed by the
+  // (unguessable, single-use) challenge token instead — see
+  // src/functions/auth.ts's verifyTotpLoginFn and the "mfa" entry in
+  // AUTH_LIMITS. This bounds an attacker cycling across many challenge
+  // tokens; the per-challenge DB attempt ceiling (TOTP_LOGIN_ATTEMPT_LIMIT)
+  // remains the primary defense against guessing a single challenge's code.
+  it("limits repeated MFA verification attempts for the same challenge token", () => {
+    for (let i = 0; i < 8; i++) enforceAuthRateLimit("mfa", "challenge-token-abc");
+    assert.throws(() => enforceAuthRateLimit("mfa", "challenge-token-abc"), TooManyRequestsError);
+  });
+
+  it("limits MFA verification by IP across many different challenge tokens", () => {
+    for (let i = 0; i < 30; i++) enforceAuthRateLimit("mfa", `challenge-token-${i}`);
+    assert.throws(() => enforceAuthRateLimit("mfa", "challenge-token-new"), TooManyRequestsError);
+  });
+
+  it("keeps the mfa, login, and signup buckets independent", () => {
+    for (let i = 0; i < 8; i++) enforceAuthRateLimit("mfa", "shared-key@example.com");
+    assert.throws(
+      () => enforceAuthRateLimit("mfa", "shared-key@example.com"),
+      TooManyRequestsError,
+    );
+    // The same string used as a "login"/"signup" key is unaffected — the
+    // bucket is namespaced by action (`auth:${action}:...`).
+    enforceAuthRateLimit("login", "shared-key@example.com");
+    enforceAuthRateLimit("signup", "shared-key@example.com");
   });
 });
 
@@ -371,7 +433,12 @@ describe("signup enumeration prevention (Stage 8.3)", () => {
   it("returns the same generic message regardless of casing of an existing email", async () => {
     seedUser("taken@example.com", "correct horse battery");
     await assert.rejects(
-      () => signUp({ name: "New Person", email: "TAKEN@example.com", password: "correct horse battery" }),
+      () =>
+        signUp({
+          name: "New Person",
+          email: "TAKEN@example.com",
+          password: "correct horse battery",
+        }),
       (error: unknown) => error instanceof ValidationError,
     );
   });
@@ -385,14 +452,22 @@ describe("signup enumeration prevention (Stage 8.3)", () => {
     assert.equal(user.email, "brand-new@example.com");
     assert.deepEqual(control.sessions, [user.id], "signup auto-logs-in via a session");
     assert.ok(user.passwordHash?.startsWith("current:"), "password stored hashed, never plaintext");
-    assert.equal(control.cookieCalls, 1, "session cookie is emitted after a successful transaction");
+    assert.equal(
+      control.cookieCalls,
+      1,
+      "session cookie is emitted after a successful transaction",
+    );
   });
 
   it("does not emit a cookie when settings initialization fails", async () => {
     control.signupFailure = "settings";
 
     await assert.rejects(() =>
-      signUp({ name: "New Person", email: "settings-fail@example.com", password: "correct horse battery" }),
+      signUp({
+        name: "New Person",
+        email: "settings-fail@example.com",
+        password: "correct horse battery",
+      }),
     );
 
     assert.equal(control.users.size, 0);
@@ -404,7 +479,11 @@ describe("signup enumeration prevention (Stage 8.3)", () => {
     control.signupFailure = "categories";
 
     await assert.rejects(() =>
-      signUp({ name: "New Person", email: "categories-fail@example.com", password: "correct horse battery" }),
+      signUp({
+        name: "New Person",
+        email: "categories-fail@example.com",
+        password: "correct horse battery",
+      }),
     );
 
     assert.equal(control.users.size, 0);
@@ -416,7 +495,11 @@ describe("signup enumeration prevention (Stage 8.3)", () => {
     control.signupFailure = "session";
 
     await assert.rejects(() =>
-      signUp({ name: "New Person", email: "session-fail@example.com", password: "correct horse battery" }),
+      signUp({
+        name: "New Person",
+        email: "session-fail@example.com",
+        password: "correct horse battery",
+      }),
     );
 
     assert.equal(control.users.size, 0);
@@ -429,11 +512,17 @@ describe("login hardening (Stage 8.3)", () => {
   it("rejects a wrong password with the same message as an unknown user", async () => {
     seedUser("real@example.com", "correct horse battery");
 
-    const wrongPassword = await logIn({ email: "real@example.com", password: "wrong password!!" }).then(
+    const wrongPassword = await logIn({
+      email: "real@example.com",
+      password: "wrong password!!",
+    }).then(
       () => null,
       (e: unknown) => e,
     );
-    const unknownUser = await logIn({ email: "ghost@example.com", password: "wrong password!!" }).then(
+    const unknownUser = await logIn({
+      email: "ghost@example.com",
+      password: "wrong password!!",
+    }).then(
       () => null,
       (e: unknown) => e,
     );
@@ -456,7 +545,9 @@ describe("login hardening (Stage 8.3)", () => {
   it("upgrades a legacy hash to current parameters on a successful login", async () => {
     seedUser("legacy@example.com", "correct horse battery", true);
 
-    const user = await logIn({ email: "legacy@example.com", password: "correct horse battery" });
+    const result = await logIn({ email: "legacy@example.com", password: "correct horse battery" });
+    assert.equal(result.requiresMfa, false);
+    const user = result.user!;
 
     assert.equal(control.rehashed.length, 1);
     assert.equal(control.rehashed[0]!.userId, user.id);
@@ -469,6 +560,23 @@ describe("login hardening (Stage 8.3)", () => {
     await logIn({ email: "current@example.com", password: "correct horse battery" });
     assert.equal(control.rehashed.length, 0);
   });
+
+  // Extension 2.3 regression guard: logIn() must resolve and return the
+  // canonical user record it already fetched — never a hand-picked partial
+  // shape (`{id, email, name}`) reconstructed ad hoc. Anything the stored
+  // user record carries must reach the caller unchanged.
+  it("returns the full resolved user record on a non-MFA login, not a partial reconstruction", async () => {
+    seedUser("full-shape@example.com", "correct horse battery");
+    const stored = control.users.get("full-shape@example.com")!;
+
+    const result = await logIn({
+      email: "full-shape@example.com",
+      password: "correct horse battery",
+    });
+
+    assert.equal(result.requiresMfa, false);
+    assert.deepEqual(result.user, stored);
+  });
 });
 
 describe("configuration failure handling (Stage 8.3)", () => {
@@ -476,7 +584,8 @@ describe("configuration failure handling (Stage 8.3)", () => {
     control.databaseConfigured = false;
 
     await assert.rejects(
-      () => signUp({ name: "New Person", email: "x@example.com", password: "correct horse battery" }),
+      () =>
+        signUp({ name: "New Person", email: "x@example.com", password: "correct horse battery" }),
       ConfigurationError,
     );
     await assert.rejects(

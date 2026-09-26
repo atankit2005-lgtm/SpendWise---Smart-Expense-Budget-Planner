@@ -28,6 +28,7 @@ import {
   updateUserPasswordHash,
   type UserRecord,
 } from "./repositories/users";
+import { userHasActiveMfa, createMfaLoginChallenge, type LoginResult } from "./totp-login";
 
 /**
  * Generic signup rejection. Deliberately does NOT confirm whether the email
@@ -53,6 +54,12 @@ const AUTH_WINDOW_MS = 15 * 60 * 1000;
 const AUTH_LIMITS = {
   login: { perIp: 20, perEmail: 5 },
   signup: { perIp: 10, perEmail: 3 },
+  // Keyed by challenge token instead of email (see enforceAuthRateLimit's
+  // `rawEmail` param below) — the request isn't authenticated yet, so a
+  // per-challenge/per-IP bound is the closest equivalent. The DB-backed
+  // per-challenge attempt ceiling (TOTP_LOGIN_ATTEMPT_LIMIT) remains the
+  // primary defense; this bounds an attacker cycling across many challenges.
+  mfa: { perIp: 30, perEmail: 8 },
 } as const;
 
 /**
@@ -78,7 +85,7 @@ function normalizeEmail(email: string): string {
  * throw 429 if either is exhausted. Never stores the password — only the
  * IP/email counters created by `consumeRateLimit`.
  */
-export function enforceAuthRateLimit(action: "login" | "signup", rawEmail: string): void {
+export function enforceAuthRateLimit(action: "login" | "signup" | "mfa", rawEmail: string): void {
   const limits = AUTH_LIMITS[action];
   const ip = requestIp();
   const emailKey = normalizeEmail(rawEmail);
@@ -96,7 +103,8 @@ export function enforceAuthRateLimit(action: "login" | "signup", rawEmail: strin
 }
 
 function validateCredentials(email: string, password: string): void {
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new ValidationError("Enter a valid email address.");
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))
+    throw new ValidationError("Enter a valid email address.");
   validatePassword(password);
 }
 
@@ -108,7 +116,11 @@ function requireDatabase(): void {
   }
 }
 
-export async function signUp(input: { name: string; email: string; password: string }): Promise<UserRecord> {
+export async function signUp(input: {
+  name: string;
+  email: string;
+  password: string;
+}): Promise<UserRecord> {
   requireDatabase();
   const name = input.name.trim();
   const email = normalizeEmail(input.email);
@@ -167,17 +179,19 @@ export async function signUp(input: { name: string; email: string; password: str
  * scrypt verification. Without it, "no such user" returns much faster than
  * "wrong password", leaking account existence via timing.
  */
-const DUMMY_PASSWORD_HASH =
-  `scrypt$32768$8$1$${"0".repeat(32)}$${"0".repeat(128)}`;
+const DUMMY_PASSWORD_HASH = `scrypt$32768$8$1$${"0".repeat(32)}$${"0".repeat(128)}`;
 
-export async function logIn(input: { email: string; password: string }): Promise<UserRecord> {
+export async function logIn(input: { email: string; password: string }): Promise<LoginResult> {
   requireDatabase();
   const email = normalizeEmail(input.email);
   validateCredentials(email, input.password);
 
   const user = await getUserByEmail(email);
   // Always run exactly one verification, whether or not the user exists.
-  const passwordValid = await verifyPassword(input.password, user?.passwordHash ?? DUMMY_PASSWORD_HASH);
+  const passwordValid = await verifyPassword(
+    input.password,
+    user?.passwordHash ?? DUMMY_PASSWORD_HASH,
+  );
   if (!user || !passwordValid) {
     throw new UnauthorizedError("Invalid email or password.");
   }
@@ -195,8 +209,25 @@ export async function logIn(input: { email: string; password: string }): Promise
     }
   }
 
+  // Check if user has MFA enabled
+  const hasMfa = await userHasActiveMfa(user.id);
+
+  if (hasMfa) {
+    // Create MFA challenge instead of session
+    const mfaChallenge = await createMfaLoginChallenge(user.id);
+    return {
+      requiresMfa: true,
+      mfaChallenge,
+    };
+  }
+
+  // No MFA: create session as before. `user` here is already the full,
+  // canonical UserRecord fetched above — never a partial/ad-hoc shape.
   await createSession(user.id);
-  return user;
+  return {
+    requiresMfa: false,
+    user,
+  };
 }
 
 export async function logOut(): Promise<void> {
