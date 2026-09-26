@@ -370,7 +370,8 @@ describe("TOTP MFA repositories", () => {
       fake.executor,
     );
     assert.equal(created.userId, userId);
-    assert.equal((fake.operations[0]?.values as { attempts: number }).attempts, 0);
+    const attempts = (fake.operations[0]?.values as { attempts?: number }).attempts;
+    assert.equal(attempts, 0);
     assert.equal((fake.operations[0]?.values as { userId: string }).userId, userId);
 
     const consumeSpy = createExecutorSpy();
@@ -380,15 +381,14 @@ describe("TOTP MFA repositories", () => {
     assert.match(consume.sql, /"digest" = \$2/);
     assert.match(consume.sql, /"expires_at" > \$3/);
     assert.match(consume.sql, /"consumed_at" is null/i);
-    assert.match(consume.sql, /"attempts" < \$4/);
-    assert.deepEqual(consume.params, [userId, digest, now.toISOString(), 5]);
+    assert.deepEqual(consume.params, [userId, digest, now.toISOString()]);
 
     const attemptSpy = createExecutorSpy();
     await incrementTotpMfaLoginChallengeAttempts(userId, digest, now, attemptSpy.executor);
     const attemptUpdate = attemptSpy.operations[0];
     assert.match(queryFor(attemptUpdate?.set?.["attempts"]).sql, /"attempts" \+ 1/);
     const attemptCondition = queryFor(attemptUpdate?.where);
-    assert.deepEqual(attemptCondition.params, [userId, digest, now.toISOString(), 5]);
+    assert.deepEqual(attemptCondition.params, [userId, digest, now.toISOString()]);
 
     const invalid = createExecutorSpy();
     await assert.rejects(

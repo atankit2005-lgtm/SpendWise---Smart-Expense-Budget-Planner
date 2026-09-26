@@ -28,6 +28,7 @@ import {
   updateUserPasswordHash,
   type UserRecord,
 } from "./repositories/users";
+import { userHasActiveMfa, createMfaLoginChallenge, type LoginResult } from "./totp-login";
 
 /**
  * Generic signup rejection. Deliberately does NOT confirm whether the email
@@ -170,7 +171,7 @@ export async function signUp(input: { name: string; email: string; password: str
 const DUMMY_PASSWORD_HASH =
   `scrypt$32768$8$1$${"0".repeat(32)}$${"0".repeat(128)}`;
 
-export async function logIn(input: { email: string; password: string }): Promise<UserRecord> {
+export async function logIn(input: { email: string; password: string }): Promise<LoginResult> {
   requireDatabase();
   const email = normalizeEmail(input.email);
   validateCredentials(email, input.password);
@@ -195,8 +196,24 @@ export async function logIn(input: { email: string; password: string }): Promise
     }
   }
 
+  // Check if user has MFA enabled
+  const hasMfa = await userHasActiveMfa(user.id);
+  
+  if (hasMfa) {
+    // Create MFA challenge instead of session
+    const mfaChallenge = await createMfaLoginChallenge(user.id);
+    return {
+      requiresMfa: true,
+      mfaChallenge,
+    };
+  }
+
+  // No MFA: create session as before
   await createSession(user.id);
-  return user;
+  return {
+    requiresMfa: false,
+    user: { id: user.id, email: user.email, name: user.name },
+  };
 }
 
 export async function logOut(): Promise<void> {

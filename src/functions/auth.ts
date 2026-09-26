@@ -16,6 +16,7 @@ import {
   confirmTotpMfaEnrollment,
   getTotpMfaStatus,
 } from "@/server/totp-enrollment";
+import { verifyTotpLogin } from "@/server/totp-login";
 
 // Rate limiting lives at this request boundary: `enforceAuthRateLimit` reads
 // the client IP from the live request, and a blocked attempt throws
@@ -35,7 +36,11 @@ export const loginFn = createServerFn({ method: "POST" })
   .handler(({ data }) =>
     withErrorBoundary(async () => {
       enforceAuthRateLimit("login", data.email);
-      return toUser(await logIn(data));
+      const result = await logIn(data);
+      if (result.requiresMfa) {
+        return { requiresMfa: true, mfaChallenge: result.mfaChallenge };
+      }
+      return { requiresMfa: false, user: toUser(result.user!) };
     }),
   );
 
@@ -87,3 +92,12 @@ export const confirmTotpMfaEnrollmentFn = createServerFn({ method: "POST" })
 export const getTotpMfaStatusFn = createServerFn({ method: "GET" }).handler(() =>
   withErrorBoundary(() => getTotpMfaStatus()),
 );
+
+export const verifyTotpLoginFn = createServerFn({ method: "POST" })
+  .validator((data: { challengeToken: string; code: string }) => data)
+  .handler(({ data }) =>
+    withErrorBoundary(async () => {
+      const result = await verifyTotpLogin(data);
+      return toUser(result);
+    }),
+  );

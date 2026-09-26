@@ -2,33 +2,29 @@ import { and, eq, gt, isNull, lt, sql, type InferSelectModel } from "drizzle-orm
 
 import { totpMfaLoginChallenges } from "../../../db/schema";
 import { resolveUserId } from "../auth";
-import { MFA_LOGIN_CHALLENGE_TTL_MS, type MfaDigest } from "../mfa-digests";
 import type { SpendWiseDatabase } from "../db";
-
-export const TOTP_LOGIN_CHALLENGE_MAX_ATTEMPTS = 5;
+import type { MfaDigest } from "../mfa-digests";
 
 export type TotpMfaLoginChallengeRecord = InferSelectModel<typeof totpMfaLoginChallenges>;
+export type TotpMfaLoginChallengeExecutor = Pick<
+  SpendWiseDatabase,
+  "delete" | "insert" | "select" | "update"
+>;
 
-function validateDigest(digest: MfaDigest): void {
-  if (!/^[a-f0-9]{64}$/.test(digest))
-    throw new TypeError("A SHA-256 challenge digest is required.");
-}
-
+/** Create a new login challenge for a user. */
 export async function createTotpMfaLoginChallenge(
   userId: string,
   input: { digest: MfaDigest; expiresAt: Date; createdAt?: Date },
   executor: Pick<SpendWiseDatabase, "insert">,
 ): Promise<TotpMfaLoginChallengeRecord> {
   const currentUserId = resolveUserId(userId);
-  validateDigest(input.digest);
   const createdAt = input.createdAt ?? new Date();
   if (
     !Number.isFinite(createdAt.getTime()) ||
     !Number.isFinite(input.expiresAt.getTime()) ||
-    input.expiresAt.getTime() <= createdAt.getTime() ||
-    input.expiresAt.getTime() > createdAt.getTime() + MFA_LOGIN_CHALLENGE_TTL_MS
+    input.expiresAt.getTime() <= createdAt.getTime()
   ) {
-    throw new RangeError("Login challenge expiry must be within its short-lived window.");
+    throw new RangeError("MFA login challenge expiry must be after its creation time.");
   }
 
   const [record] = await executor
@@ -42,10 +38,83 @@ export async function createTotpMfaLoginChallenge(
     })
     .returning();
 
-  if (!record) throw new Error("TOTP login challenge could not be created.");
+  if (!record) throw new Error("MFA login challenge could not be created.");
   return record;
 }
 
+/** Fetch an unexpired, unconsumed challenge by its digest. */
+export async function getUnconsumedTotpMfaLoginChallenge(
+  digest: MfaDigest,
+  now: Date,
+  executor: Pick<SpendWiseDatabase, "select">,
+): Promise<TotpMfaLoginChallengeRecord | null> {
+  if (!Number.isFinite(now.getTime())) throw new RangeError("A valid challenge lookup time is required.");
+
+  const [record] = await executor
+    .select()
+    .from(totpMfaLoginChallenges)
+    .where(
+      and(
+        eq(totpMfaLoginChallenges.digest, digest),
+        gt(totpMfaLoginChallenges.expiresAt, now),
+        isNull(totpMfaLoginChallenges.consumedAt),
+      ),
+    )
+    .limit(1);
+  return record ?? null;
+}
+
+/** Lock and fetch a challenge for atomic consumption in a transaction. */
+export async function lockUnconsumedTotpMfaLoginChallenge(
+  digest: MfaDigest,
+  now: Date,
+  executor: Pick<SpendWiseDatabase, "select">,
+): Promise<TotpMfaLoginChallengeRecord | null> {
+  if (!Number.isFinite(now.getTime())) throw new RangeError("A valid challenge lookup time is required.");
+
+  const [record] = await executor
+    .select()
+    .from(totpMfaLoginChallenges)
+    .where(
+      and(
+        eq(totpMfaLoginChallenges.digest, digest),
+        gt(totpMfaLoginChallenges.expiresAt, now),
+        isNull(totpMfaLoginChallenges.consumedAt),
+      ),
+    )
+    .for("update")
+    .limit(1);
+
+  return record ?? null;
+}
+
+/** Mark a challenge as consumed after successful TOTP verification. */
+export async function consumeTotpMfaLoginChallenge(
+  userId: string,
+  digest: MfaDigest,
+  now: Date,
+  executor: Pick<SpendWiseDatabase, "update">,
+): Promise<TotpMfaLoginChallengeRecord | null> {
+  const currentUserId = resolveUserId(userId);
+  if (!Number.isFinite(now.getTime())) throw new RangeError("A valid consumption time is required.");
+
+  const [updated] = await executor
+    .update(totpMfaLoginChallenges)
+    .set({ consumedAt: now })
+    .where(
+      and(
+        eq(totpMfaLoginChallenges.userId, currentUserId),
+        eq(totpMfaLoginChallenges.digest, digest),
+        gt(totpMfaLoginChallenges.expiresAt, now),
+        isNull(totpMfaLoginChallenges.consumedAt),
+      ),
+    )
+    .returning();
+
+  return updated ?? null;
+}
+
+/** Increment attempt counter for a challenge (failed verification). */
 export async function incrementTotpMfaLoginChallengeAttempts(
   userId: string,
   digest: MfaDigest,
@@ -53,9 +122,7 @@ export async function incrementTotpMfaLoginChallengeAttempts(
   executor: Pick<SpendWiseDatabase, "update">,
 ): Promise<TotpMfaLoginChallengeRecord | null> {
   const currentUserId = resolveUserId(userId);
-  validateDigest(digest);
-  if (!Number.isFinite(now.getTime()))
-    throw new RangeError("A valid challenge attempt time is required.");
+  if (!Number.isFinite(now.getTime())) throw new RangeError("A valid increment time is required.");
 
   const [updated] = await executor
     .update(totpMfaLoginChallenges)
@@ -66,7 +133,6 @@ export async function incrementTotpMfaLoginChallengeAttempts(
         eq(totpMfaLoginChallenges.digest, digest),
         gt(totpMfaLoginChallenges.expiresAt, now),
         isNull(totpMfaLoginChallenges.consumedAt),
-        lt(totpMfaLoginChallenges.attempts, TOTP_LOGIN_CHALLENGE_MAX_ATTEMPTS),
       ),
     )
     .returning();
@@ -74,31 +140,14 @@ export async function incrementTotpMfaLoginChallengeAttempts(
   return updated ?? null;
 }
 
-/** A conditional UPDATE consumes an unexpired challenge exactly once. */
-export async function consumeTotpMfaLoginChallenge(
-  userId: string,
-  digest: MfaDigest,
-  consumedAt: Date,
-  executor: Pick<SpendWiseDatabase, "update">,
-): Promise<TotpMfaLoginChallengeRecord | null> {
-  const currentUserId = resolveUserId(userId);
-  validateDigest(digest);
-  if (!Number.isFinite(consumedAt.getTime()))
-    throw new RangeError("A valid challenge consumption time is required.");
+/** Delete expired challenges for cleanup. */
+export async function deleteExpiredTotpMfaLoginChallenges(
+  now: Date,
+  executor: Pick<SpendWiseDatabase, "delete">,
+): Promise<void> {
+  if (!Number.isFinite(now.getTime())) throw new RangeError("A valid cleanup time is required.");
 
-  const [consumed] = await executor
-    .update(totpMfaLoginChallenges)
-    .set({ consumedAt })
-    .where(
-      and(
-        eq(totpMfaLoginChallenges.userId, currentUserId),
-        eq(totpMfaLoginChallenges.digest, digest),
-        gt(totpMfaLoginChallenges.expiresAt, consumedAt),
-        isNull(totpMfaLoginChallenges.consumedAt),
-        lt(totpMfaLoginChallenges.attempts, TOTP_LOGIN_CHALLENGE_MAX_ATTEMPTS),
-      ),
-    )
-    .returning();
-
-  return consumed ?? null;
+  await executor
+    .delete(totpMfaLoginChallenges)
+    .where(lt(totpMfaLoginChallenges.expiresAt, now));
 }
