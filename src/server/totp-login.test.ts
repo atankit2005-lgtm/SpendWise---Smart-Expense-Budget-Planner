@@ -2,8 +2,8 @@
  * Extension 2.3 — Login MFA challenge/enforcement tests.
  *
  * `verifyTotpLogin`'s own dependencies (db transaction wrapper, session
- * creation, the login-challenge and MFA-configuration repositories, and the
- * user repository) are replaced with in-test fakes via node:test module
+ * creation, the login-challenge, MFA-configuration, and recovery-code
+ * repositories, and the user repository) are replaced with in-test fakes via node:test module
  * mocks, following the same pattern as authentication.security.test.ts.
  * `mfa-digests`, `totp`, and `totp-crypto` are left real: the digest
  * hashing fix (client token -> stored SHA-256 digest) and real TOTP
@@ -170,10 +170,33 @@ mock.module("./repositories/totp-mfa-login-challenges", {
   },
 });
 
+/**
+ * In-memory recovery-code table mirroring the real repository's semantics:
+ * rows are keyed by digest (raw codes are never stored), scoped to their
+ * owner, and the conditional consume makes each code single-use.
+ */
+interface FakeRecoveryCode {
+  userId: string;
+  digest: string;
+  consumedAt: Date | null;
+}
+const recoveryCodes = new Map<string, FakeRecoveryCode>();
+
+mock.module("./repositories/totp-mfa-recovery-codes", {
+  namedExports: {
+    consumeTotpMfaRecoveryCode: async (userId: string, digest: string, now: Date) => {
+      const record = recoveryCodes.get(digest);
+      if (!record || record.userId !== userId || record.consumedAt !== null) return null;
+      record.consumedAt = now;
+      return { ...record };
+    },
+  },
+});
+
 const { createMfaLoginChallenge, userHasActiveMfa, verifyTotpLogin, TOTP_LOGIN_ATTEMPT_LIMIT } =
   await import("./totp-login");
 const { ValidationError, TooManyRequestsError, UnauthorizedError } = await import("./errors");
-const { digestMfaValue } = await import("./mfa-digests");
+const { digestMfaValue, digestRecoveryCode } = await import("./mfa-digests");
 const { encryptTotpSecret } = await import("./totp-crypto");
 const { createTotp, generateTotpSecret } = await import("./totp");
 
@@ -192,12 +215,22 @@ function enrollMfa(userId: string, now = NOW): { code: string } {
   return { code };
 }
 
+/**
+ * Seeds one recovery code for `userId`, storing only its digest — exactly
+ * what enrollment persists via replaceTotpMfaRecoveryCodeDigests.
+ */
+function seedRecoveryCode(userId: string, code: string): void {
+  const digest = digestRecoveryCode(code);
+  recoveryCodes.set(digest, { userId, digest, consumedAt: null });
+}
+
 beforeEach(() => {
   control.sessions = [];
   control.cookieCalls = 0;
   control.mfaConfigurations.clear();
   control.users.clear();
   challenges.clear();
+  recoveryCodes.clear();
 });
 
 describe("userHasActiveMfa", () => {
@@ -422,5 +455,199 @@ describe("Rate limiting constants", () => {
     assert.equal(typeof windowMs, "number");
     assert.ok(limit > 0);
     assert.ok(windowMs > 0);
+  });
+});
+
+describe("verifyTotpLogin — recovery codes (Extension 2.4)", () => {
+  // Canonical enrollment format: XXXX-XXXX-XXXX-XXXX over the unambiguous
+  // alphabet (no I/O/0/1). digestRecoveryCode stores only the SHA-256 digest.
+  const VALID_CODE = "ABCD-EFGH-JKLM-NPQR";
+  const UNSSEEDED_CODE = "2345-6789-ABCD-EFGH";
+
+  it("succeeds with a valid challenge + recovery code, consumes both, and returns the canonical full user", async () => {
+    seedUser("user-1", { name: "Recovery User", phone: "+91 98765 00000" });
+    enrollMfa("user-1");
+    seedRecoveryCode("user-1", VALID_CODE);
+    const challenge = await createMfaLoginChallenge("user-1", NOW);
+
+    const user = await verifyTotpLogin({ challengeToken: challenge.token, code: VALID_CODE }, NOW);
+
+    assert.equal(user.id, "user-1");
+    assert.equal(user.name, "Recovery User");
+    assert.equal(user.phone, "+91 98765 00000");
+    assert.ok(user.createdAt instanceof Date, "canonical UserRecord fields must be present");
+    assert.deepEqual(control.sessions, ["user-1"], "a session must be created only after success");
+    assert.ok(
+      challenges.get(digestMfaValue(challenge.token))!.consumedAt,
+      "the challenge must be marked consumed",
+    );
+    assert.ok(
+      recoveryCodes.get(digestRecoveryCode(VALID_CODE))!.consumedAt,
+      "the recovery code must be marked consumed",
+    );
+  });
+
+  it("a consumed recovery code cannot be replayed, even on a fresh challenge", async () => {
+    seedUser("user-1");
+    enrollMfa("user-1");
+    seedRecoveryCode("user-1", VALID_CODE);
+
+    const first = await createMfaLoginChallenge("user-1", NOW);
+    await verifyTotpLogin({ challengeToken: first.token, code: VALID_CODE }, NOW);
+    assert.deepEqual(control.sessions, ["user-1"]);
+
+    const second = await createMfaLoginChallenge("user-1", NOW);
+    await assert.rejects(
+      verifyTotpLogin({ challengeToken: second.token, code: VALID_CODE }, NOW),
+      ValidationError,
+    );
+    assert.deepEqual(control.sessions, ["user-1"], "replay must not create a second session");
+  });
+
+  it("an unknown recovery code fails, increments attempts, and leaves the challenge unconsumed", async () => {
+    seedUser("user-1");
+    enrollMfa("user-1");
+    seedRecoveryCode("user-1", VALID_CODE);
+    const challenge = await createMfaLoginChallenge("user-1", NOW);
+
+    await assert.rejects(
+      verifyTotpLogin({ challengeToken: challenge.token, code: UNSSEEDED_CODE }, NOW),
+      ValidationError,
+    );
+
+    assert.deepEqual(control.sessions, []);
+    const stored = challenges.get(digestMfaValue(challenge.token))!;
+    assert.equal(stored.attempts, 1);
+    assert.equal(stored.consumedAt, null);
+    assert.equal(
+      recoveryCodes.get(digestRecoveryCode(VALID_CODE))!.consumedAt,
+      null,
+      "a failed attempt must not consume the user's real code",
+    );
+  });
+
+  it("another user's recovery code cannot complete this user's challenge", async () => {
+    seedUser("user-a");
+    seedUser("user-b");
+    enrollMfa("user-a");
+    enrollMfa("user-b");
+    // The code belongs to user-b; the challenge belongs to user-a.
+    seedRecoveryCode("user-b", VALID_CODE);
+    const challengeA = await createMfaLoginChallenge("user-a", NOW);
+
+    await assert.rejects(
+      verifyTotpLogin({ challengeToken: challengeA.token, code: VALID_CODE }, NOW),
+      ValidationError,
+    );
+    assert.deepEqual(control.sessions, []);
+    assert.equal(
+      recoveryCodes.get(digestRecoveryCode(VALID_CODE))!.consumedAt,
+      null,
+      "a cross-user attempt must not consume the code either",
+    );
+  });
+
+  it("the attempt ceiling applies to recovery-code failures too", async () => {
+    seedUser("user-1");
+    enrollMfa("user-1");
+    const challenge = await createMfaLoginChallenge("user-1", NOW);
+
+    for (let i = 0; i < TOTP_LOGIN_ATTEMPT_LIMIT; i++) {
+      await assert.rejects(
+        verifyTotpLogin({ challengeToken: challenge.token, code: UNSSEEDED_CODE }, NOW),
+        ValidationError,
+      );
+    }
+    await assert.rejects(
+      verifyTotpLogin({ challengeToken: challenge.token, code: VALID_CODE }, NOW),
+      TooManyRequestsError,
+      "a challenge at its attempt ceiling is dead even for a valid code",
+    );
+    assert.deepEqual(control.sessions, []);
+  });
+
+  it("accepts lowercase entry of a recovery code (canonical digest is uppercase)", async () => {
+    seedUser("user-1");
+    enrollMfa("user-1");
+    seedRecoveryCode("user-1", VALID_CODE);
+    const challenge = await createMfaLoginChallenge("user-1", NOW);
+
+    const user = await verifyTotpLogin(
+      { challengeToken: challenge.token, code: VALID_CODE.toLowerCase() },
+      NOW,
+    );
+    assert.equal(user.id, "user-1");
+    assert.deepEqual(control.sessions, ["user-1"]);
+  });
+
+  it("rejects a malformed code without touching the challenge", async () => {
+    seedUser("user-1");
+    enrollMfa("user-1");
+    seedRecoveryCode("user-1", VALID_CODE);
+    const challenge = await createMfaLoginChallenge("user-1", NOW);
+
+    // Outside the recovery alphabet (I/O/0/1 are never issued) and not a
+    // 6-digit TOTP — must be rejected on shape, before any repository call.
+    for (const malformed of ["IO01-IO01-IO01-IO01", "not-a-code", "ABCD-EFGH-JKLM"]) {
+      await assert.rejects(
+        verifyTotpLogin({ challengeToken: challenge.token, code: malformed }, NOW),
+        ValidationError,
+      );
+    }
+    const stored = challenges.get(digestMfaValue(challenge.token))!;
+    assert.equal(stored.attempts, 0, "shape validation happens before any state change");
+    assert.equal(stored.consumedAt, null);
+  });
+
+  it("an expired challenge fails with a valid recovery code and creates no session", async () => {
+    seedUser("user-1");
+    enrollMfa("user-1");
+    seedRecoveryCode("user-1", VALID_CODE);
+    const challenge = await createMfaLoginChallenge("user-1", NOW);
+
+    const afterExpiry = new Date(NOW.getTime() + 6 * 60 * 1000); // TTL is 5 minutes
+    await assert.rejects(
+      verifyTotpLogin({ challengeToken: challenge.token, code: VALID_CODE }, afterExpiry),
+      ValidationError,
+    );
+    assert.deepEqual(control.sessions, []);
+    assert.equal(recoveryCodes.get(digestRecoveryCode(VALID_CODE))!.consumedAt, null);
+  });
+
+  it("recovery login leaves the TOTP replay watermark untouched (independent proof types)", async () => {
+    seedUser("user-1");
+    const { code } = enrollMfa("user-1");
+    seedRecoveryCode("user-1", VALID_CODE);
+
+    const first = await createMfaLoginChallenge("user-1", NOW);
+    await verifyTotpLogin({ challengeToken: first.token, code: VALID_CODE }, NOW);
+
+    // The current TOTP step was never accepted by the recovery login, so a
+    // subsequent TOTP login on a fresh challenge must still succeed.
+    const second = await createMfaLoginChallenge("user-1", NOW);
+    const user = await verifyTotpLogin({ challengeToken: second.token, code }, NOW);
+    assert.equal(user.id, "user-1");
+    assert.deepEqual(control.sessions, ["user-1", "user-1"]);
+  });
+
+  it("never leaks the recovery code, its digest, or the challenge token in an error", async () => {
+    seedUser("user-1");
+    enrollMfa("user-1");
+    seedRecoveryCode("user-1", VALID_CODE);
+    const challenge = await createMfaLoginChallenge("user-1", NOW);
+
+    try {
+      await verifyTotpLogin({ challengeToken: challenge.token, code: UNSSEEDED_CODE }, NOW);
+      assert.fail("expected verifyTotpLogin to reject");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      assert.ok(!message.includes(UNSSEEDED_CODE), "the submitted code must never be echoed");
+      assert.ok(
+        !message.includes(digestRecoveryCode(UNSSEEDED_CODE)),
+        "recovery digests must never appear in an error message",
+      );
+      assert.ok(!message.includes(challenge.token), "raw token must never appear in an error");
+      assert.ok(!message.includes(digestMfaValue(challenge.token)), "nor the challenge digest");
+    }
   });
 });

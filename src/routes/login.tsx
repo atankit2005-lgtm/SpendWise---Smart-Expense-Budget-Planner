@@ -7,6 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { loginFn, verifyTotpLoginFn } from "@/functions/auth";
 
+/** Canonical recovery-code shape issued at MFA enrollment (case-insensitive here). */
+const RECOVERY_CODE_PATTERN = /^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){3}$/i;
+
 export const Route = createFileRoute("/login")({
   head: () => ({
     meta: [
@@ -57,12 +60,14 @@ function LoginPage() {
   async function submitTotp(e: React.FormEvent) {
     e.preventDefault();
     const next: Errors = {};
-    if (!/^\d{6}$/.test(values.totpCode)) next.totpCode = "Enter a 6-digit code.";
+    const code = values.totpCode.trim();
+    if (!/^\d{6}$/.test(code) && !RECOVERY_CODE_PATTERN.test(code))
+      next.totpCode = "Enter your 6-digit code or a recovery code.";
     setErrors(next);
     if (Object.keys(next).length) return;
     setLoading(true);
     try {
-      await verifyTotpLoginFn({ data: { challengeToken: mfaChallenge!.token, code: values.totpCode } });
+      await verifyTotpLoginFn({ data: { challengeToken: mfaChallenge!.token, code } });
       setLoading(false);
       toast.success("Welcome back to SpendWise");
       navigate({ to: "/app" });
@@ -82,7 +87,7 @@ function LoginPage() {
   return (
     <AuthLayout
       title={requiresMfa ? "Verify your identity" : "Log in to SpendWise"}
-      subtitle={requiresMfa ? "Enter the code from your authenticator app." : "Pick up where you left off with your money."}
+      subtitle={requiresMfa ? "Enter the code from your authenticator app or use a recovery code." : "Pick up where you left off with your money."}
       footer={
         <>
           Don&apos;t have an account?{" "}
@@ -99,16 +104,17 @@ function LoginPage() {
             <Input
               id="totpCode"
               type="text"
-              inputMode="numeric"
-              pattern="\d{6}"
-              maxLength={6}
+              maxLength={19}
               autoComplete="one-time-code"
-              placeholder="123456"
+              placeholder="123456 or XXXX-XXXX-XXXX-XXXX"
               value={values.totpCode}
               aria-invalid={!!errors.totpCode}
               onChange={(e) => setValues((v) => ({ ...v, totpCode: e.target.value }))}
             />
             {errors.totpCode ? <p className="text-xs text-destructive">{errors.totpCode}</p> : null}
+            <p className="text-xs text-muted-foreground">
+              Lost your device? Use one of the recovery codes you saved during setup.
+            </p>
           </div>
           <div className="flex gap-2">
             <Button type="button" variant="outline" onClick={handleBackToPassword} disabled={loading}>

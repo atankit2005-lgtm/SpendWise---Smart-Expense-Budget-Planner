@@ -1,5 +1,5 @@
 /**
- * Extension 2.3 — real-PostgreSQL concurrency/replay verification.
+ * Extensions 2.3/2.4 — real-PostgreSQL concurrency/replay verification.
  *
  * The unit-level coverage in totp-login.test.ts uses in-memory fakes for the
  * repository layer, which cannot demonstrate genuine row-lock atomicity —
@@ -11,6 +11,9 @@
  *       cannot both authenticate — exactly one succeeds.
  *   (K) concurrent verification attempts cannot both accept the same TOTP
  *       step (advanceAcceptedTotpStep's replay watermark holds under load).
+ *   (L) concurrent recovery-code verifications cannot both consume the same
+ *       single-use code (consumeTotpMfaRecoveryCode's conditional UPDATE
+ *       holds under load) — Extension 2.4.
  *
  * Requires DATABASE_URL to point at a disposable PostgreSQL database with
  * this project's migrations applied (`npm run db:migrate`). Skips cleanly
@@ -60,11 +63,15 @@ if (hasDatabase) {
   });
 }
 
-describe("Extension 2.3 — real PostgreSQL concurrency", { skip: !hasDatabase }, async () => {
+describe("Extensions 2.3/2.4 — real PostgreSQL concurrency", { skip: !hasDatabase }, async () => {
   if (!hasDatabase) return;
 
   const { createUser } = await import("./repositories/users");
   const { activateTotpMfa } = await import("./repositories/totp-mfa-configurations");
+  const { replaceTotpMfaRecoveryCodeDigests } = await import(
+    "./repositories/totp-mfa-recovery-codes"
+  );
+  const { digestRecoveryCode } = await import("./mfa-digests");
   const { encryptTotpSecret } = await import("./totp-crypto");
   const { createTotp, generateTotpSecret } = await import("./totp");
   const { createMfaLoginChallenge, verifyTotpLogin } = await import("./totp-login");
@@ -123,6 +130,28 @@ describe("Extension 2.3 — real PostgreSQL concurrency", { skip: !hasDatabase }
 
     const fulfilled = results.filter((r) => r.status === "fulfilled");
     assert.equal(fulfilled.length, 1, "only one of the two same-step challenges may be accepted");
+    assert.equal(sessions.filter((id) => id === userId).length, 1);
+  });
+
+  it("(L) concurrent recovery-code verifications cannot both consume the same single-use code (Extension 2.4)", async () => {
+    const { userId, now } = await seedMfaUser(`concurrency-l-${Date.now()}@example.com`);
+    const recoveryCode = "ABCD-EFGH-JKLM-NPQR";
+    await replaceTotpMfaRecoveryCodeDigests(
+      userId,
+      [digestRecoveryCode(recoveryCode)],
+      db,
+      now,
+    );
+    const challengeOne = await createMfaLoginChallenge(userId, now);
+    const challengeTwo = await createMfaLoginChallenge(userId, now);
+
+    const results = await Promise.allSettled([
+      verifyTotpLogin({ challengeToken: challengeOne.token, code: recoveryCode }, now),
+      verifyTotpLogin({ challengeToken: challengeTwo.token, code: recoveryCode }, now),
+    ]);
+
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    assert.equal(fulfilled.length, 1, "a single-use recovery code may authenticate exactly once");
     assert.equal(sessions.filter((id) => id === userId).length, 1);
   });
 });
