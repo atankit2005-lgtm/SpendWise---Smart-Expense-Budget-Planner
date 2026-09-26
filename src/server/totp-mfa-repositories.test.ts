@@ -13,11 +13,13 @@ import {
   activateTotpMfa,
   advanceAcceptedTotpStep,
   getTotpMfaConfiguration,
+  lockUserForTotpMfaEnrollment,
   type TotpMfaConfigurationExecutor,
 } from "./repositories/totp-mfa-configurations";
 import {
   replacePendingTotpMfaEnrollment,
   getUnexpiredPendingTotpMfaEnrollment,
+  lockUnexpiredPendingTotpMfaEnrollment,
 } from "./repositories/pending-totp-mfa-enrollments";
 import {
   consumeTotpMfaRecoveryCode,
@@ -39,6 +41,7 @@ interface CapturedOperation {
   set?: Record<string, unknown>;
   values?: unknown;
   conflict?: unknown;
+  forUpdate?: boolean;
 }
 
 function createExecutorSpy(options: { selectedRows?: unknown[]; updatedRows?: unknown[] } = {}) {
@@ -74,6 +77,10 @@ function createExecutorSpy(options: { selectedRows?: unknown[]; updatedRows?: un
           operation.conflict = config;
           return builder;
         },
+        onConflictDoNothing(config: unknown) {
+          operation.conflict = config;
+          return builder;
+        },
         returning: async () => {
           const value =
             typeof operation.values === "object" && operation.values !== null
@@ -104,6 +111,13 @@ function createExecutorSpy(options: { selectedRows?: unknown[]; updatedRows?: un
             where(condition: unknown) {
               operation.where = condition;
               return {
+                for() {
+                  operation.forUpdate = true;
+                  return this;
+                },
+                then(resolve: (value: unknown[]) => unknown, reject: (error: unknown) => unknown) {
+                  return Promise.resolve(options.selectedRows ?? []).then(resolve, reject);
+                },
                 limit: async () => options.selectedRows ?? [],
               };
             },
@@ -259,6 +273,18 @@ describe("TOTP MFA repositories", () => {
     assert.notEqual(userId, otherUserId);
   });
 
+  it("locks an unexpired pending row inside the caller's transaction", async () => {
+    const fake = createExecutorSpy();
+    assert.equal(await lockUnexpiredPendingTotpMfaEnrollment(userId, now, fake.executor), null);
+    const operation = fake.operations[0];
+    assert.equal(operation?.table, "totp_mfa_pending_enrollments");
+    assert.equal(operation?.forUpdate, true);
+    const where = queryFor(operation?.where);
+    assert.match(where.sql, /"user_id" = \$1/);
+    assert.match(where.sql, /"expires_at" > \$2/);
+    assert.deepEqual(where.params, [userId, now.toISOString()]);
+  });
+
   it("reads active MFA exclusively from the dedicated configuration table", async () => {
     const fake = createExecutorSpy();
     assert.equal(await getTotpMfaConfiguration(userId, fake.executor), null);
@@ -266,13 +292,25 @@ describe("TOTP MFA repositories", () => {
     assert.deepEqual(queryFor(fake.operations[0]?.where).params, [userId]);
   });
 
+  it("locks the authenticated user's parent row to serialize enrollment changes", async () => {
+    const fake = createExecutorSpy({
+      selectedRows: [{ id: userId }],
+    });
+    assert.equal(await lockUserForTotpMfaEnrollment(userId, fake.executor), true);
+    const lock = fake.operations[0];
+    assert.equal(lock?.table, "users");
+    assert.equal(lock?.forUpdate, true);
+    assert.deepEqual(queryFor(lock?.where).params, [userId]);
+  });
+
   it("activates in the supplied executor and advances the replay step only monotonically per user", async () => {
     const fake = createExecutorSpy();
     const active = await activateTotpMfa(
       userId,
-      { secret: encryptedSecret, activatedAt: now },
+      { secret: encryptedSecret, acceptedStep: 42, activatedAt: now },
       fake.executor as TotpMfaConfigurationExecutor,
     );
+    assert.ok(active);
     assert.equal(active.userId, userId);
     assert.deepEqual(
       fake.operations.map((operation) => [operation.kind, operation.table]),

@@ -112,7 +112,8 @@ mock.module("./repositories/users", {
     getUserByEmail: async (email: string) => control.users.get(email.trim().toLowerCase()) ?? null,
     getUserById: async (userId: string) => {
       for (const user of control.users.values()) if (user.id === userId) return user;
-      throw new Error("not found");
+      const { NotFoundError } = await import("./errors");
+      throw new NotFoundError("User not found.");
     },
     createUser: async (input: { email: string; name: string; passwordHash?: string | null }) => {
       const email = input.email.trim().toLowerCase();
@@ -142,6 +143,7 @@ const {
   changeCurrentUserPassword,
   enforceAuthRateLimit,
   logIn,
+  reauthenticateCurrentUser,
   signOutOtherSessions,
   signUp,
 } = await import("./authentication");
@@ -160,6 +162,57 @@ function seedUser(email: string, password: string, legacy = false): void {
 }
 
 describe("authenticated account operations (Stage 9.3A)", () => {
+  it("reauthenticates only the current session user and returns no password material", async () => {
+    seedUser("owner@example.com", "correct horse battery");
+    control.sessions = ["user-1"];
+
+    const authenticated = await reauthenticateCurrentUser("correct horse battery");
+
+    assert.deepEqual(authenticated, { userId: "user-1", email: "owner@example.com" });
+    assert.deepEqual(control.verifyCalls, [
+      { password: "correct horse battery", encoded: "current:correct horse battery" },
+    ]);
+  });
+
+  it("rejects incorrect passwords and invalid session context without exposing credentials", async () => {
+    seedUser("owner@example.com", "correct horse battery");
+    control.sessions = ["user-1"];
+
+    await assert.rejects(
+      () => reauthenticateCurrentUser("incorrect password"),
+      (error: unknown) =>
+        error instanceof UnauthorizedError &&
+        error.message === "Current password is incorrect." &&
+        !error.message.includes("incorrect password"),
+    );
+    control.sessions = [];
+    await assert.rejects(() => reauthenticateCurrentUser("correct horse battery"), UnauthorizedError);
+    control.sessions = ["unknown-session-user"];
+    await assert.rejects(() => reauthenticateCurrentUser("correct horse battery"), UnauthorizedError);
+    assert.equal(control.verifyCalls.length, 1, "invalid session users must not verify a password");
+  });
+
+  it("rejects malformed reauthentication input without logging it", async () => {
+    seedUser("owner@example.com", "correct horse battery");
+    control.sessions = ["user-1"];
+    const previousError = console.error;
+    const previousWarn = console.warn;
+    const previousLog = console.log;
+    const logged: unknown[][] = [];
+    console.error = (...args: unknown[]) => logged.push(args);
+    console.warn = (...args: unknown[]) => logged.push(args);
+    console.log = (...args: unknown[]) => logged.push(args);
+    try {
+      await assert.rejects(() => reauthenticateCurrentUser("short"), UnauthorizedError);
+      assert.deepEqual(logged, []);
+      assert.deepEqual(control.verifyCalls, []);
+    } finally {
+      console.error = previousError;
+      console.warn = previousWarn;
+      console.log = previousLog;
+    }
+  });
+
   it("rejects password changes without an authenticated session", async () => {
     await assert.rejects(
       () =>

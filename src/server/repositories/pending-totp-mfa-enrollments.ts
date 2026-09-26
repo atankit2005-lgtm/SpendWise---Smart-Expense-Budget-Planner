@@ -65,3 +65,27 @@ export async function getUnexpiredPendingTotpMfaEnrollment(
     .limit(1);
   return record ?? null;
 }
+
+/** Fetch and lock the caller's current pending row inside a transaction. */
+export async function lockUnexpiredPendingTotpMfaEnrollment(
+  userId: string,
+  now: Date,
+  executor: Pick<SpendWiseDatabase, "select">,
+): Promise<PendingTotpMfaEnrollmentRecord | null> {
+  const currentUserId = resolveUserId(userId);
+  if (!Number.isFinite(now.getTime())) throw new RangeError("A valid enrollment lookup time is required.");
+
+  const [record] = await executor
+    .select()
+    .from(pendingTotpMfaEnrollments)
+    .where(
+      and(
+        eq(pendingTotpMfaEnrollments.userId, currentUserId),
+        gt(pendingTotpMfaEnrollments.expiresAt, now),
+      ),
+    )
+    .for("update")
+    .limit(1);
+
+  return record ?? null;
+}

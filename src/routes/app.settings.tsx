@@ -10,6 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { changePasswordFn, signOutOtherSessionsFn } from "@/functions/auth";
 import { exportPersonalDataFn } from "@/functions/finance";
+import { TotpEnrollmentSettings } from "@/components/app/totp-enrollment-settings";
 import { useFinance } from "@/store/finance";
 import type { UserPreferences } from "@/types";
 
@@ -203,11 +204,7 @@ function SettingsPage() {
 
         <TabsContent value="security">
           <Panel title="Security" description="Protect access to your account">
-            <Row title="Two-factor authentication" description="Two-factor authentication is not available yet.">
-              <span className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground">
-                Not available yet
-              </span>
-            </Row>
+            <TotpEnrollmentSettings />
             <form className="space-y-4 border-b border-border py-4" onSubmit={changePassword}>
               <div>
                 <p className="text-sm font-medium">Change password</p>

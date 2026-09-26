@@ -5,6 +5,7 @@ import db, { isDatabaseConfigured } from "./db";
 import { ConfigurationError } from "./env";
 import {
   DuplicateResourceError,
+  NotFoundError,
   TooManyRequestsError,
   UnauthorizedError,
   ValidationError,
@@ -218,6 +219,38 @@ export async function changeCurrentUserPassword(input: {
   }
 
   await updateUserPasswordHash(userId, await hashPassword(input.newPassword));
+}
+
+/** Reauthenticate the signed-in account without accepting caller-selected identities. */
+export async function reauthenticateCurrentUser(currentPassword: unknown): Promise<{
+  userId: string;
+  email: string;
+}> {
+  requireDatabase();
+  const userId = await requireSessionUserId();
+  if (
+    typeof currentPassword !== "string" ||
+    currentPassword.length < 8 ||
+    currentPassword.length > 1024
+  ) {
+    throw new UnauthorizedError("Current password is incorrect.");
+  }
+
+  let user: UserRecord;
+  try {
+    user = await getUserById(userId);
+  } catch (error) {
+    if (error instanceof NotFoundError) {
+      throw new UnauthorizedError("Current password is incorrect.");
+    }
+    throw error;
+  }
+
+  if (!(await verifyPassword(currentPassword, user.passwordHash))) {
+    throw new UnauthorizedError("Current password is incorrect.");
+  }
+
+  return { userId, email: normalizeEmail(user.email) };
 }
 
 export async function signOutOtherSessions(): Promise<void> {

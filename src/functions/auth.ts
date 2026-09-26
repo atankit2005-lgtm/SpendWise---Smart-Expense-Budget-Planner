@@ -11,6 +11,11 @@ import {
 } from "@/server/authentication";
 import { withErrorBoundary } from "@/server/error-boundary";
 import { completePasswordReset, requestPasswordReset } from "@/server/password-reset";
+import {
+  beginTotpMfaEnrollment,
+  confirmTotpMfaEnrollment,
+  getTotpMfaStatus,
+} from "@/server/totp-enrollment";
 
 // Rate limiting lives at this request boundary: `enforceAuthRateLimit` reads
 // the client IP from the live request, and a blocked attempt throws
@@ -69,4 +74,16 @@ export const getCurrentUserFn = createServerFn({ method: "GET" }).handler(() =>
     const user = await getCurrentSessionUser();
     return user ? toUser(user) : null;
   }),
+);
+
+export const beginTotpMfaEnrollmentFn = createServerFn({ method: "POST" })
+  .validator((data: { currentPassword: string }) => data)
+  .handler(({ data }) => withErrorBoundary(() => beginTotpMfaEnrollment(data)));
+
+export const confirmTotpMfaEnrollmentFn = createServerFn({ method: "POST" })
+  .validator((data: { code: string }) => data)
+  .handler(({ data }) => withErrorBoundary(() => confirmTotpMfaEnrollment(data)));
+
+export const getTotpMfaStatusFn = createServerFn({ method: "GET" }).handler(() =>
+  withErrorBoundary(() => getTotpMfaStatus()),
 );
