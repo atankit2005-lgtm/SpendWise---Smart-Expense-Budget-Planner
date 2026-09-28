@@ -46,11 +46,10 @@ function requireDatabase(): void {
  */
 const RECOVERY_CODE_PATTERN = /^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){3}$/;
 
-type SubmittedVerificationCode =
-  | { kind: "totp"; code: string }
-  | { kind: "recovery"; code: string };
+export type SubmittedVerificationCode =
+  { kind: "totp"; code: string } | { kind: "recovery"; code: string };
 
-function classifyVerificationCode(value: unknown): SubmittedVerificationCode | null {
+export function classifyVerificationCode(value: unknown): SubmittedVerificationCode | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   if (/^\d{6}$/.test(trimmed)) return { kind: "totp", code: trimmed };

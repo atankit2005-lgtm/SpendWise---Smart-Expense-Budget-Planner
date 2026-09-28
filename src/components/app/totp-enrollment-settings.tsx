@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
+import { toast } from "sonner";
 
 import {
   beginTotpMfaEnrollmentFn,
   confirmTotpMfaEnrollmentFn,
+  disableTotpMfaFn,
   getTotpMfaStatusFn,
 } from "@/functions/auth";
 import { Button } from "@/components/ui/button";
@@ -16,11 +19,15 @@ interface EnrollmentDetails {
   expiresAt: string;
 }
 
+/** Recovery-code shape issued at enrollment (case-insensitive entry). */
+const RECOVERY_CODE_PATTERN = /^[A-HJ-NP-Z2-9]{4}(?:-[A-HJ-NP-Z2-9]{4}){3}$/i;
+
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
 export function TotpEnrollmentSettings() {
+  const navigate = useNavigate();
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [currentPassword, setCurrentPassword] = useState("");
   const [code, setCode] = useState("");
@@ -85,6 +92,27 @@ export function TotpEnrollmentSettings() {
     }
   }
 
+  async function submitDisable(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmedCode = code.trim();
+    if (!/^\d{6}$/.test(trimmedCode) && !RECOVERY_CODE_PATTERN.test(trimmedCode)) {
+      setError("Enter your current six-digit code or an unused recovery code.");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    try {
+      await disableTotpMfaFn({ data: { currentPassword, code: trimmedCode } });
+      // All sessions were revoked and the cookie cleared server-side.
+      toast.success("Two-factor authentication is disabled. Please log in again.");
+      navigate({ to: "/login" });
+    } catch (caught) {
+      setError(errorMessage(caught, "Could not disable two-factor authentication."));
+      setLoading(false);
+    }
+  }
+
   if (enabled === null) {
     return (
       <div className="border-b border-border py-4">
@@ -101,9 +129,8 @@ export function TotpEnrollmentSettings() {
           <div>
             <p className="text-sm font-medium">Two-factor authentication</p>
             <p className="text-xs text-muted-foreground">
-              Authenticator enrollment is confirmed and existing sessions were revoked. Sign-in
-              verification is not yet enforced in this release, so this does not add an MFA login
-              challenge.
+              Authenticator enrollment is confirmed and existing sessions were revoked. Every future
+              login requires a code from your authenticator app or an unused recovery code.
             </p>
           </div>
           <span className="rounded-full border border-primary/40 px-3 py-1 text-xs text-primary">
@@ -131,6 +158,45 @@ export function TotpEnrollmentSettings() {
             </Button>
           </section>
         ) : null}
+        <form className="mt-4 space-y-3 border-t border-border pt-4" onSubmit={submitDisable}>
+          <div>
+            <h3 className="text-sm font-medium">Disable two-factor authentication</h3>
+            <p className="text-xs text-muted-foreground">
+              Enter your password and a current six-digit code (or an unused recovery code). All
+              sessions are signed out and you’ll log in again without two-factor authentication.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="totp-disable-password">Current password</Label>
+            <Input
+              id="totp-disable-password"
+              type="password"
+              autoComplete="current-password"
+              value={currentPassword}
+              onChange={(event) => setCurrentPassword(event.target.value)}
+              required
+            />
+            <Label htmlFor="totp-disable-code">Authentication code</Label>
+            <Input
+              id="totp-disable-code"
+              type="text"
+              autoComplete="one-time-code"
+              maxLength={19}
+              placeholder="123456 or XXXX-XXXX-XXXX-XXXX"
+              value={code}
+              onChange={(event) => setCode(event.target.value)}
+              required
+            />
+          </div>
+          {error ? (
+            <p role="alert" className="text-xs text-destructive">
+              {error}
+            </p>
+          ) : null}
+          <Button type="submit" variant="outline" size="sm" disabled={loading}>
+            {loading ? "Disabling…" : "Disable two-factor authentication"}
+          </Button>
+        </form>
       </div>
     );
   }

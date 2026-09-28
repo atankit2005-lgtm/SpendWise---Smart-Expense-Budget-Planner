@@ -12,6 +12,7 @@ import {
 import {
   activateTotpMfa,
   advanceAcceptedTotpStep,
+  deactivateTotpMfa,
   getTotpMfaConfiguration,
   lockUserForTotpMfaEnrollment,
   type TotpMfaConfigurationExecutor,
@@ -23,6 +24,7 @@ import {
 } from "./repositories/pending-totp-mfa-enrollments";
 import {
   consumeTotpMfaRecoveryCode,
+  deleteTotpMfaRecoveryCodesForUser,
   replaceTotpMfaRecoveryCodeDigests,
 } from "./repositories/totp-mfa-recovery-codes";
 import {
@@ -360,6 +362,24 @@ describe("TOTP MFA repositories", () => {
     assert.match(condition.sql, /"digest" = \$2/);
     assert.match(condition.sql, /"consumed_at" is null/i);
     assert.deepEqual(condition.params, [userId, digest]);
+  });
+
+  it("deactivates only the current user's configuration and purges every recovery digest", async () => {
+    const fake = createExecutorSpy();
+    assert.equal(await deactivateTotpMfa(userId, fake.executor), false);
+    const operation = fake.operations[0];
+    assert.equal(operation?.kind, "delete");
+    assert.equal(operation?.table, "totp_mfa_configurations");
+    assert.deepEqual(queryFor(operation?.where).params, [userId]);
+    assert.equal(fake.operations.length, 1);
+
+    const recoverySpy = createExecutorSpy();
+    await deleteTotpMfaRecoveryCodesForUser(userId, recoverySpy.executor);
+    const recoveryDelete = recoverySpy.operations[0];
+    assert.equal(recoveryDelete?.kind, "delete");
+    assert.equal(recoveryDelete?.table, "totp_mfa_recovery_codes");
+    assert.deepEqual(queryFor(recoveryDelete?.where).params, [userId]);
+    assert.equal(recoverySpy.operations.length, 1);
   });
 
   it("enforces challenge expiry, attempt ceilings, single-use state, and user isolation", async () => {

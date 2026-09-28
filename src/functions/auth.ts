@@ -14,6 +14,7 @@ import { completePasswordReset, requestPasswordReset } from "@/server/password-r
 import {
   beginTotpMfaEnrollment,
   confirmTotpMfaEnrollment,
+  disableTotpMfa,
   getTotpMfaStatus,
 } from "@/server/totp-enrollment";
 import { verifyTotpLogin } from "@/server/totp-login";
@@ -94,6 +95,15 @@ export const confirmTotpMfaEnrollmentFn = createServerFn({ method: "POST" })
 export const getTotpMfaStatusFn = createServerFn({ method: "GET" }).handler(() =>
   withErrorBoundary(() => getTotpMfaStatus()),
 );
+
+export const disableTotpMfaFn = createServerFn({ method: "POST" })
+  .validator((data: { currentPassword: string; code: string }) => data)
+  .handler(({ data }) =>
+    withErrorBoundary(async () => {
+      await disableTotpMfa(data);
+      return { ok: true };
+    }),
+  );
 
 export const verifyTotpLoginFn = createServerFn({ method: "POST" })
   .validator((data: { challengeToken: string; code: string }) => data)

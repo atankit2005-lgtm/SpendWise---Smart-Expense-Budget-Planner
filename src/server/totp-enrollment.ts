@@ -11,9 +11,15 @@ import { reauthenticateCurrentUser, requireSessionUserId } from "./authenticatio
 import { consumeRateLimit } from "./rate-limit";
 import { clearSessionCookie } from "./session";
 import { revokeAllSessionsForUser } from "./repositories/sessions";
-import { replaceTotpMfaRecoveryCodeDigests } from "./repositories/totp-mfa-recovery-codes";
+import {
+  consumeTotpMfaRecoveryCode,
+  deleteTotpMfaRecoveryCodesForUser,
+  replaceTotpMfaRecoveryCodeDigests,
+} from "./repositories/totp-mfa-recovery-codes";
 import {
   activateTotpMfa,
+  advanceAcceptedTotpStep,
+  deactivateTotpMfa,
   getTotpMfaConfiguration,
   lockUserForTotpMfaEnrollment,
 } from "./repositories/totp-mfa-configurations";
@@ -23,6 +29,7 @@ import {
 } from "./repositories/pending-totp-mfa-enrollments";
 import { decryptTotpSecret, encryptTotpSecret } from "./totp-crypto";
 import { createTotpUri, generateTotpSecret, validateTotpCode } from "./totp";
+import { classifyVerificationCode } from "./totp-login";
 
 export const TOTP_PENDING_ENROLLMENT_TTL_MS = 10 * 60 * 1000;
 export const TOTP_ENROLLMENT_ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
@@ -30,6 +37,8 @@ export const TOTP_ENROLLMENT_ATTEMPT_LIMIT = 10;
 
 const MFA_ALREADY_ENABLED_MESSAGE =
   "Authenticator-based two-factor authentication is already enabled for this account.";
+const MFA_NOT_ENABLED_MESSAGE =
+  "Authenticator-based two-factor authentication is not enabled for this account.";
 const INVALID_ENROLLMENT_CODE_MESSAGE =
   "That verification code is invalid or has already been used.";
 const ENROLLMENT_UNAVAILABLE_MESSAGE =
@@ -157,4 +166,65 @@ export async function getTotpMfaStatus(): Promise<{ enabled: boolean }> {
   requireDatabase();
   const userId = await requireSessionUserId();
   return { enabled: (await getTotpMfaConfiguration(userId, db)) !== null };
+}
+
+/**
+ * Reauthenticate, verify a current TOTP (advancing the replay watermark) or
+ * an unused recovery code (consumed atomically), then deactivate MFA in one
+ * transaction and revoke every session so the account must log in again as
+ * password-only.
+ */
+export async function disableTotpMfa(
+  input: { currentPassword?: unknown; code?: unknown } | null,
+  now: Date = new Date(),
+): Promise<void> {
+  requireDatabase();
+  const account = await reauthenticateCurrentUser(input?.currentPassword);
+  const submitted = classifyVerificationCode(input?.code);
+  if (!submitted) throw new ValidationError(INVALID_ENROLLMENT_CODE_MESSAGE);
+  if (!Number.isFinite(now.getTime()))
+    throw new RangeError("A valid deactivation time is required.");
+
+  // Same process-local limiter design as enrollment confirmation: the key
+  // holds only the authenticated user id, never the password or the code.
+  const decision = consumeRateLimit(
+    `auth:totp-disable:${account.userId}`,
+    TOTP_ENROLLMENT_ATTEMPT_LIMIT,
+    TOTP_ENROLLMENT_ATTEMPT_WINDOW_MS,
+    now.getTime(),
+  );
+  if (!decision.allowed)
+    throw new TooManyRequestsError("Too many verification attempts. Start again later.");
+
+  await db.transaction(async (tx) => {
+    if (!(await requireEnrollmentTransaction(tx, account.userId))) {
+      throw new UnauthorizedError("You must be signed in to access SpendWise.");
+    }
+
+    const active = await getTotpMfaConfiguration(account.userId, tx);
+    if (!active) throw new ValidationError(MFA_NOT_ENABLED_MESSAGE);
+
+    if (submitted.kind === "totp") {
+      const secret = decryptTotpSecret(active.encryptedSecret);
+      const acceptedStep = validateTotpCode(secret, submitted.code, now);
+      if (acceptedStep === null) throw new ValidationError(INVALID_ENROLLMENT_CODE_MESSAGE);
+      const advanced = await advanceAcceptedTotpStep(account.userId, acceptedStep, now, tx);
+      if (!advanced) throw new ValidationError(INVALID_ENROLLMENT_CODE_MESSAGE);
+    } else {
+      const consumed = await consumeTotpMfaRecoveryCode(
+        account.userId,
+        digestRecoveryCode(submitted.code),
+        now,
+        tx,
+      );
+      if (!consumed) throw new ValidationError(INVALID_ENROLLMENT_CODE_MESSAGE);
+    }
+
+    if (!(await deactivateTotpMfa(account.userId, tx)))
+      throw new ValidationError(MFA_NOT_ENABLED_MESSAGE);
+    await deleteTotpMfaRecoveryCodesForUser(account.userId, tx);
+    await revokeAllSessionsForUser(account.userId, tx);
+  });
+
+  clearSessionCookie();
 }

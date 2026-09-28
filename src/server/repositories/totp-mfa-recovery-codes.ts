@@ -34,6 +34,15 @@ export async function replaceTotpMfaRecoveryCodeDigests(
   }
 }
 
+/** Remove every recovery-code digest (consumed and unconsumed) for a user. */
+export async function deleteTotpMfaRecoveryCodesForUser(
+  userId: string,
+  executor: Pick<SpendWiseDatabase, "delete">,
+): Promise<void> {
+  const currentUserId = resolveUserId(userId);
+  await executor.delete(totpMfaRecoveryCodes).where(eq(totpMfaRecoveryCodes.userId, currentUserId));
+}
+
 /** A single conditional UPDATE makes concurrent use of a code single-use. */
 export async function consumeTotpMfaRecoveryCode(
   userId: string,

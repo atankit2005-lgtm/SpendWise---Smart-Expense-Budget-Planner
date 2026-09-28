@@ -74,6 +74,23 @@ export async function activateTotpMfa(
   return record ?? null;
 }
 
+/**
+ * Delete the user's active configuration. Call only from a caller-owned
+ * transaction that has already verified the second-factor proof and locked
+ * the user row. Returns false when no active configuration existed.
+ */
+export async function deactivateTotpMfa(
+  userId: string,
+  executor: Pick<SpendWiseDatabase, "delete">,
+): Promise<boolean> {
+  const currentUserId = resolveUserId(userId);
+  const deleted = await executor
+    .delete(totpMfaConfigurations)
+    .where(eq(totpMfaConfigurations.userId, currentUserId))
+    .returning({ userId: totpMfaConfigurations.userId });
+  return deleted.length > 0;
+}
+
 /** Accepts a counter only if it strictly advances the user's replay watermark. */
 export async function advanceAcceptedTotpStep(
   userId: string,
