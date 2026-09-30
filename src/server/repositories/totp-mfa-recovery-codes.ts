@@ -1,4 +1,4 @@
-import { and, eq, isNull, type InferSelectModel } from "drizzle-orm";
+import { and, count, eq, isNull, type InferSelectModel } from "drizzle-orm";
 
 import { totpMfaRecoveryCodes } from "../../../db/schema";
 import { resolveUserId } from "../auth";
@@ -6,6 +6,25 @@ import type { MfaDigest } from "../mfa-digests";
 import type { SpendWiseDatabase } from "../db";
 
 export type TotpMfaRecoveryCodeRecord = InferSelectModel<typeof totpMfaRecoveryCodes>;
+
+/** Count unconsumed recovery codes belonging strictly to the specified user. */
+export async function getRemainingTotpMfaRecoveryCodeCount(
+  userId: string,
+  executor: Pick<SpendWiseDatabase, "select">,
+): Promise<number> {
+  const currentUserId = resolveUserId(userId);
+  const [result] = await executor
+    .select({ count: count() })
+    .from(totpMfaRecoveryCodes)
+    .where(
+      and(
+        eq(totpMfaRecoveryCodes.userId, currentUserId),
+        isNull(totpMfaRecoveryCodes.consumedAt),
+      ),
+    );
+
+  return Number(result?.count ?? 0);
+}
 
 function validateDigest(digest: MfaDigest): void {
   if (!/^[a-f0-9]{64}$/.test(digest))

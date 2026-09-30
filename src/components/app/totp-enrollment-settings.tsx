@@ -7,6 +7,7 @@ import {
   confirmTotpMfaEnrollmentFn,
   disableTotpMfaFn,
   getTotpMfaStatusFn,
+  regenerateTotpMfaRecoveryCodesFn,
 } from "@/functions/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,18 +30,26 @@ function errorMessage(error: unknown, fallback: string): string {
 export function TotpEnrollmentSettings() {
   const navigate = useNavigate();
   const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [remainingCodes, setRemainingCodes] = useState<number | null>(null);
   const [currentPassword, setCurrentPassword] = useState("");
   const [code, setCode] = useState("");
+  const [regenPassword, setRegenPassword] = useState("");
+  const [regenCode, setRegenCode] = useState("");
   const [enrollment, setEnrollment] = useState<EnrollmentDetails | null>(null);
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   const [error, setError] = useState("");
+  const [regenError, setRegenError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [regenLoading, setRegenLoading] = useState(false);
 
   useEffect(() => {
     let current = true;
     void getTotpMfaStatusFn()
       .then((status) => {
-        if (current) setEnabled(status.enabled);
+        if (current) {
+          setEnabled(status.enabled);
+          setRemainingCodes(status.remainingRecoveryCodes ?? null);
+        }
       })
       .catch((caught: unknown) => {
         if (current) setError(errorMessage(caught, "Could not load authenticator status."));
@@ -83,12 +92,41 @@ export function TotpEnrollmentSettings() {
       setCode("");
       setRecoveryCodes(result.recoveryCodes);
       setEnabled(true);
+      setRemainingCodes(10);
     } catch (caught) {
       const message = errorMessage(caught, "Could not verify the authenticator code.");
       setError(message);
       if (/setup is missing or expired/i.test(message)) setEnrollment(null);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function submitRegenerate(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmedCode = regenCode.trim();
+    if (!/^\d{6}$/.test(trimmedCode)) {
+      setRegenError("Enter the six-digit code from your authenticator app.");
+      return;
+    }
+
+    setRegenLoading(true);
+    setRegenError("");
+    try {
+      const result = await regenerateTotpMfaRecoveryCodesFn({
+        data: { currentPassword: regenPassword, code: trimmedCode },
+      });
+      setRecoveryCodes(result.recoveryCodes);
+      setRemainingCodes(10);
+      setRegenPassword("");
+      setRegenCode("");
+      toast.success(
+        "Recovery codes regenerated. All active sessions were signed out. Save your new codes before signing in again.",
+      );
+    } catch (caught) {
+      setRegenError(errorMessage(caught, "Could not regenerate recovery codes."));
+    } finally {
+      setRegenLoading(false);
     }
   }
 
@@ -132,6 +170,11 @@ export function TotpEnrollmentSettings() {
               Authenticator enrollment is confirmed and existing sessions were revoked. Every future
               login requires a code from your authenticator app or an unused recovery code.
             </p>
+            <p className="mt-2 text-xs font-medium text-foreground">
+              {remainingCodes !== null
+                ? `${remainingCodes} of 10 recovery codes remaining`
+                : "Recovery codes configured."}
+            </p>
           </div>
           <span className="rounded-full border border-primary/40 px-3 py-1 text-xs text-primary">
             Enabled
@@ -158,6 +201,51 @@ export function TotpEnrollmentSettings() {
             </Button>
           </section>
         ) : null}
+        <form className="mt-4 space-y-3 border-t border-border pt-4" onSubmit={submitRegenerate}>
+          <div>
+            <h3 className="text-sm font-medium">Regenerate recovery codes</h3>
+            <p className="text-xs text-muted-foreground">
+              Regenerating invalidates all previous recovery codes and signs you out of all sessions.
+              You will receive 10 new recovery codes and will need to log in again.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="totp-regen-password">Current password</Label>
+            <Input
+              id="totp-regen-password"
+              type="password"
+              autoComplete="current-password"
+              value={regenPassword}
+              onChange={(event) => setRegenPassword(event.target.value)}
+              required
+            />
+            <Label htmlFor="totp-regen-code">Six-digit authenticator code</Label>
+            <Input
+              id="totp-regen-code"
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              placeholder="123456"
+              value={regenCode}
+              onChange={(event) => setRegenCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
+              required
+            />
+          </div>
+          {regenError ? (
+            <p role="alert" className="text-xs text-destructive">
+              {regenError}
+            </p>
+          ) : null}
+          <Button
+            type="submit"
+            variant="outline"
+            size="sm"
+            disabled={regenLoading || regenCode.length !== 6}
+          >
+            {regenLoading ? "Regenerating…" : "Regenerate recovery codes"}
+          </Button>
+        </form>
         <form className="mt-4 space-y-3 border-t border-border pt-4" onSubmit={submitDisable}>
           <div>
             <h3 className="text-sm font-medium">Disable two-factor authentication</h3>

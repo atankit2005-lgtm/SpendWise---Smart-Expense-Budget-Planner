@@ -25,6 +25,7 @@ import {
 import {
   consumeTotpMfaRecoveryCode,
   deleteTotpMfaRecoveryCodesForUser,
+  getRemainingTotpMfaRecoveryCodeCount,
   replaceTotpMfaRecoveryCodeDigests,
 } from "./repositories/totp-mfa-recovery-codes";
 import {
@@ -472,5 +473,20 @@ describe("TOTP MFA repositories", () => {
       /simulated insert failure/,
     );
     assert.deepEqual(persisted, [{ userId, encryptedSecret: "old" }]);
+  });
+
+  it("counts only unconsumed recovery codes strictly for the specified user", async () => {
+    const fake = createExecutorSpy({
+      selectedRows: [{ count: 7 }],
+    });
+    const remaining = await getRemainingTotpMfaRecoveryCodeCount(userId, fake.executor);
+    assert.equal(remaining, 7);
+    const operation = fake.operations[0];
+    assert.equal(operation?.kind, "select");
+    assert.equal(operation?.table, "totp_mfa_recovery_codes");
+    const where = queryFor(operation?.where);
+    assert.match(where.sql, /"user_id" = \$1/);
+    assert.match(where.sql, /"consumed_at" is null/i);
+    assert.deepEqual(where.params, [userId]);
   });
 });

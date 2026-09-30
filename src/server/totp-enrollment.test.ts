@@ -225,6 +225,12 @@ mock.module("./repositories/totp-mfa-recovery-codes", {
       state.consumedDigests.push(digest);
       return { userId, digest, consumedAt: new Date() };
     },
+    getRemainingTotpMfaRecoveryCodeCount: async (userId: string) => {
+      const state = stateFor(userId);
+      return state.recoveryDigests.filter(
+        (digest) => !state.consumedDigests.includes(digest),
+      ).length;
+    },
     deleteTotpMfaRecoveryCodesForUser: async (userId: string) => {
       if (control.failRecoveryDelete) throw new Error("simulated recovery deletion failure");
       const state = stateFor(userId);
@@ -359,7 +365,10 @@ describe("TOTP enrollment", () => {
       encryptionKeyId: "key",
       lastAcceptedStep: 1,
     };
-    assert.deepEqual(await getTotpMfaStatus(), { enabled: true });
+    assert.deepEqual(await getTotpMfaStatus(), {
+      enabled: true,
+      remainingRecoveryCodes: 0,
+    });
     control.configured = false;
     await assert.rejects(getTotpMfaStatus(), ConfigurationError);
   });

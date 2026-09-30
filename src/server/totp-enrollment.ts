@@ -14,6 +14,7 @@ import { revokeAllSessionsForUser } from "./repositories/sessions";
 import {
   consumeTotpMfaRecoveryCode,
   deleteTotpMfaRecoveryCodesForUser,
+  getRemainingTotpMfaRecoveryCodeCount,
   replaceTotpMfaRecoveryCodeDigests,
 } from "./repositories/totp-mfa-recovery-codes";
 import {
@@ -162,10 +163,69 @@ export async function confirmTotpMfaEnrollment(
   return { recoveryCodes };
 }
 
-export async function getTotpMfaStatus(): Promise<{ enabled: boolean }> {
+export async function getTotpMfaStatus(): Promise<{
+  enabled: boolean;
+  remainingRecoveryCodes?: number;
+}> {
   requireDatabase();
   const userId = await requireSessionUserId();
-  return { enabled: (await getTotpMfaConfiguration(userId, db)) !== null };
+  const active = await getTotpMfaConfiguration(userId, db);
+  if (!active) return { enabled: false };
+  const remainingRecoveryCodes = await getRemainingTotpMfaRecoveryCodeCount(userId, db);
+  return { enabled: true, remainingRecoveryCodes };
+}
+
+/**
+ * Reauthenticate, verify a current TOTP (advancing the replay watermark),
+ * atomically replace all stored recovery-code digests with 10 fresh codes,
+ * and revoke every session so the user must log in again.
+ */
+export async function regenerateTotpMfaRecoveryCodes(
+  input: { currentPassword?: unknown; code?: unknown } | null,
+  now: Date = new Date(),
+): Promise<{ recoveryCodes: string[] }> {
+  requireDatabase();
+  const account = await reauthenticateCurrentUser(input?.currentPassword);
+  const code = input?.code;
+  if (!isVerificationCode(code)) throw new ValidationError(INVALID_ENROLLMENT_CODE_MESSAGE);
+  if (!Number.isFinite(now.getTime()))
+    throw new RangeError("A valid regeneration time is required.");
+
+  const decision = consumeRateLimit(
+    `auth:totp-recovery:regenerate:${account.userId}`,
+    TOTP_ENROLLMENT_ATTEMPT_LIMIT,
+    TOTP_ENROLLMENT_ATTEMPT_WINDOW_MS,
+    now.getTime(),
+  );
+  if (!decision.allowed)
+    throw new TooManyRequestsError("Too many verification attempts. Start again later.");
+
+  const recoveryCodes = await db.transaction(async (tx) => {
+    if (!(await requireEnrollmentTransaction(tx, account.userId))) {
+      throw new UnauthorizedError("You must be signed in to access SpendWise.");
+    }
+
+    const active = await getTotpMfaConfiguration(account.userId, tx);
+    if (!active) throw new ValidationError(MFA_NOT_ENABLED_MESSAGE);
+
+    const secret = decryptTotpSecret(active.encryptedSecret);
+    const acceptedStep = validateTotpCode(secret, code, now);
+    if (acceptedStep === null) throw new ValidationError(INVALID_ENROLLMENT_CODE_MESSAGE);
+
+    const advanced = await advanceAcceptedTotpStep(account.userId, acceptedStep, now, tx);
+    if (!advanced) throw new ValidationError(INVALID_ENROLLMENT_CODE_MESSAGE);
+
+    const generatedRecoveryCodes = generateRecoveryCodes();
+    const recoveryDigests = generatedRecoveryCodes.map(digestRecoveryCode);
+
+    await replaceTotpMfaRecoveryCodeDigests(account.userId, recoveryDigests, tx, now);
+    await revokeAllSessionsForUser(account.userId, tx);
+
+    return generatedRecoveryCodes;
+  });
+
+  clearSessionCookie();
+  return { recoveryCodes };
 }
 
 /**

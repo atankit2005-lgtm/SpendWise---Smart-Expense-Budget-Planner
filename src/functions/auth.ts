@@ -16,6 +16,7 @@ import {
   confirmTotpMfaEnrollment,
   disableTotpMfa,
   getTotpMfaStatus,
+  regenerateTotpMfaRecoveryCodes,
 } from "@/server/totp-enrollment";
 import { verifyTotpLogin } from "@/server/totp-login";
 
@@ -104,6 +105,10 @@ export const disableTotpMfaFn = createServerFn({ method: "POST" })
       return { ok: true };
     }),
   );
+
+export const regenerateTotpMfaRecoveryCodesFn = createServerFn({ method: "POST" })
+  .validator((data: { currentPassword: string; code: string }) => data)
+  .handler(({ data }) => withErrorBoundary(() => regenerateTotpMfaRecoveryCodes(data)));
 
 export const verifyTotpLoginFn = createServerFn({ method: "POST" })
   .validator((data: { challengeToken: string; code: string }) => data)
