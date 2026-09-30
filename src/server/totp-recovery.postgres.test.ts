@@ -282,7 +282,11 @@ describe(
             { currentPassword: "test-password", code: currentTotp(secret, now) },
             now,
           ),
-          /forced regeneration rollback/,
+          (error: unknown) => {
+            if (!(error instanceof Error)) return false;
+            const cause = error.cause;
+            return cause instanceof Error && cause.message === "forced regeneration rollback";
+          },
         );
       } finally {
         await db.execute(sql.raw(`DROP TRIGGER IF EXISTS "${triggerName}" ON sessions`));
