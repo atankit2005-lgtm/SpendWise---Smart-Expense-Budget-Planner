@@ -31,6 +31,7 @@
  */
 
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import { after, describe, it, mock } from "node:test";
 
 const hasDatabase = Boolean(process.env["DATABASE_URL"]?.trim());
@@ -135,7 +136,9 @@ describe("Extensions 2.3/2.4 — real PostgreSQL concurrency", { skip: !hasDatab
 
   it("(L) concurrent recovery-code verifications cannot both consume the same single-use code (Extension 2.4)", async () => {
     const { userId, now } = await seedMfaUser(`concurrency-l-${Date.now()}@example.com`);
-    const recoveryCode = "ABCD-EFGH-JKLM-NPQR";
+    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    const chars = Array.from(randomBytes(16), (byte) => alphabet[byte % 32]!).join("");
+    const recoveryCode = `${chars.slice(0, 4)}-${chars.slice(4, 8)}-${chars.slice(8, 12)}-${chars.slice(12, 16)}`;
     await replaceTotpMfaRecoveryCodeDigests(
       userId,
       [digestRecoveryCode(recoveryCode)],
